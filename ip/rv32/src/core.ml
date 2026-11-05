@@ -83,7 +83,8 @@ module I = struct
     ; mem_rdata : 'a [@bits 32]
     ; irq : 'a [@bits 3] (* software, timer, external; Zicsr only *)
     ; seip : 'a (* supervisor external interrupt (PLIC); [~s] only *)
-    ; time : 'a [@bits 64] (* CLINT mtime for time/timeh and Sstc; [~s] only *)
+    ; mtime : 'a [@bits 64]
+      (* CLINT mtime: time/timeh and Sstc; [~s] only ("time" is a Verilog keyword) *)
     }
   [@@deriving hardcaml]
 end
@@ -329,7 +330,7 @@ let create
   (* mip: MSIP, MTIP, MEIP (and SEIP) from the inputs, SSIP/STIP/SEIP as
      written by software, STIP from Sstc. *)
   let spread3 v = v.:(2) @: zero 3 @: v.:(1) @: zero 3 @: v.:(0) @: zero 3 in
-  let%hw stip_sstc = if s then stce &: (i.time >=: stimecmp.value) else gnd in
+  let%hw stip_sstc = if s then stce &: (i.mtime >=: stimecmp.value) else gnd in
   let%hw mip =
     if not zicsr
     then zero 12
@@ -435,8 +436,8 @@ let create
     if not s
     then []
     else
-      [ 0xc01, lo i.time
-      ; 0xc81, hi i.time
+      [ 0xc01, lo i.mtime
+      ; 0xc81, hi i.mtime
       ; 0x302, uresize medeleg.value 32
       ; 0x303, uresize mideleg.value 32
       ; 0x306, uresize mcounteren.value 32

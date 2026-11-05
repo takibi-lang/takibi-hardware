@@ -73,17 +73,88 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | Found at | Count |
 |----------|-------|
 | S0 | 1 |
-| S1 | 7 |
-| S2 | 1 (board-sim) |
+| S1 | 11 |
+| S2 | 2 (board-sim) |
 | S3 | 6 |
 | S4 | 2 |
 
-By class: testbench 7, toolchain 4, model 1, inference 1, resource 1,
-reset/init 1, process/environment 1, logic 1, model 1 more (B-0026).
+By class: testbench 11, toolchain 4, model 1, inference 1, resource 1,
+reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 1 (B-0031).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0031: core input port named `time`, a Verilog keyword
+
+- Date: 2026-11-05
+- Project: ip/rv32 (core, S/U modes, #6)
+- Found at: S2b (Verilog generation for the iCEstick board simulation:
+  "port name has already been defined or matches a reserved identifier
+  (name time)"); Catchable at: S1
+- Class: naming
+- Symptom: `make` stopped at board-sim; every Cyclesim test had passed.
+- Cause: the new CLINT time input was called `time`. Cyclesim never
+  prints names; the first Verilog output was in the board flows.
+- Fix: renamed to `mtime`.
+- Regression: test_smode.ml prints the S configuration of the core as
+  Verilog (S1).
+
+### B-0030: S/U random test never ran its body in M-mode
+
+- Date: 2026-11-05
+- Project: ip/rv32/test/test_smode.ml (random S/U lockstep programs, #6)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: the coverage line had no ECALL from M (cause 11).
+- Cause: mepc pointed at the MRET itself (off by one word), so the first
+  MRET returned to itself; the second one ran with MPP = 0 and dropped
+  every program to U-mode before the body.
+- Fix: mepc = the word after the MRET.
+- Regression: the test prints which (target mode, cause) entries occurred;
+  M:11 is in the expectation, so a lost privilege level shows up.
+
+### B-0029: S/U random test delegated EBREAK, so programs ran off the end
+
+- Date: 2026-11-05
+- Project: ip/rv32/test/test_smode.ml (random S/U lockstep programs, #6)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: 2 of 300 programs reached pc 0x1000 (model: access fault).
+- Cause: a random medeleg value `0xb1ff land r` could set bit 3; EBREAK,
+  which ends a program through the M handler, went to the S handler and
+  was skipped, and execution fell through the handlers into zeroed memory.
+- Fix: the random medeleg values never contain bit 3.
+- Regression: none beyond the test itself (all programs must end with
+  the EBREAK halt).
+
+### B-0028: S/U random test could leave TSR set while an interrupt arrived
+
+- Date: 2026-11-05
+- Project: ip/rv32/test/test_smode.ml (random S/U lockstep programs, #6)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: found while chasing B-0029 (same run-off-the-end symptom).
+- Cause: an arbitrary mstatus write was followed by a second instruction
+  clearing TSR; an interrupt between the two entered the S handler with
+  TSR set, and its SRET trapped.
+- Fix: mask TSR out of the value before the single mstatus write.
+- Regression: as B-0029.
+
+### B-0027: S/U random test branched into the middle of instruction sequences
+
+- Date: 2026-11-05
+- Project: ip/rv32/test/test_smode.ml (random S/U lockstep programs, #6)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: lockstep mismatch: the model took a fetch page fault where
+  the core (no MMU yet) executed the next instruction.
+- Cause: a forward branch placed before an item skipped a distance that
+  did not include that item, landing inside a later `li`/`csrw` pair;
+  satp was written with a stale temporary (bit 31 from menvcfgh), which
+  turned on Sv32 in the model only.
+- Fix: the distance includes the item the branch precedes.
+- Regression: the test itself (300 programs per configuration).
 
 ### B-0026: model passed rv32mi instret_overflow only because its counters read zero
 

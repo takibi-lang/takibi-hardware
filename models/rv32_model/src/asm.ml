@@ -186,6 +186,11 @@ let csrr rd csr = csrrs rd csr 0
 let csrw csr rs1 = csrrw 0 csr rs1
 let mret = 0x30200073
 let wfi = 0x10500073
+let sret = 0x10200073
+
+let sfence_vma rs1 rs2 =
+  r_type ~funct7:0b0001001 ~funct3:0 ~opcode:0b1110011 0 rs1 rs2
+;;
 
 module Csr = struct
   let mstatus = 0x300
@@ -201,4 +206,23 @@ module Csr = struct
   let minstret = 0xb02
   let cycle = 0xc00
   let mhartid = 0xf14
+  let medeleg = 0x302
+  let mideleg = 0x303
+  let mcounteren = 0x306
+  let menvcfgh = 0x31a
+  let sstatus = 0x100
+  let sie = 0x104
+  let stvec = 0x105
+  let scounteren = 0x106
+  let sscratch = 0x140
+  let sepc = 0x141
+  let scause = 0x142
+  let stval = 0x143
+  let sip = 0x144
+  let stimecmp = 0x14d
+  let stimecmph = 0x15d
+  let satp = 0x180
+  let time = 0xc01
+  let timeh = 0xc81
+  let instret = 0xc02
 end

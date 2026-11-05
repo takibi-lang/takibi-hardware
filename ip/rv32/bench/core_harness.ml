@@ -35,6 +35,7 @@ let create_sim ?zicsr ?dual_read ?fetch_overlap ?m ?a ?s ?reset_pc ~base () =
 (* [model_program] (default: [program]) exists to test the checker itself.
    [irq cycle] drives the core's 3-bit interrupt input (Zicsr) and, in
    bit 3, SEIP ([~s]); [time cycle] is the CLINT time ([~s]);
+   [trace] sees every retirement of the core;
    [checker_irq] (default [irq]) is what the lockstep checker is told, to
    test the checker itself. *)
 let run
@@ -49,6 +50,7 @@ let run
   ?stop_on_write
   ?(irq = fun (_ : int) -> 0)
   ?checker_irq
+  ?(trace = fun (_ : Rv32_model.Machine.retire) -> ())
   ?(base = Rv32_model.Isa.Rv32e)
   ?(mem_bytes = 4096)
   ?(max_cycles = 100_000)
@@ -80,7 +82,7 @@ let run
       i.irq := Bits.of_int ~width:3 (irq cycle land 7);
       i.seip := Bits.of_bool (irq cycle land 8 <> 0);
       let time_now = time cycle in
-      i.time := Bits.of_int ~width:64 time_now;
+      i.mtime := Bits.of_int ~width:64 time_now;
       let irq_now = (Option.value checker_irq ~default:irq) cycle in
       Cyclesim.cycle_check sim;
       Cyclesim.cycle_before_clock_edge sim;
@@ -99,6 +101,7 @@ let run
         Lockstep.on_halt lockstep ~trap;
         { retired = lockstep.retired; interrupts = lockstep.interrupts; cycles = cycle; trap = Some trap; mismatch = lockstep.mismatch; memory = mem; stop_value = None })
       else (
+        if Bits.to_bool !(o.retire) then trace (Lockstep.of_core o);
         if Bits.to_bool !(o.retire) then Lockstep.on_retire
             ~irq:irq_now
             ~irq_fetch:boundary_irq

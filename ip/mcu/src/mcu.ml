@@ -94,7 +94,7 @@ let create (config : Config.t) scope (i : _ I.t) =
       ~zifencei:config.ma
       ~base:config.base
       scope
-      { Rv32.Core.I.clock = i.clock; clear; mem_rdata; irq; seip = gnd; time = zero 64 }
+      { Rv32.Core.I.clock = i.clock; clear; mem_rdata; irq; seip = gnd; mtime = zero 64 }
   in
   let addr = core.mem_addr in
   let%hw is_io = addr.:(28) in
