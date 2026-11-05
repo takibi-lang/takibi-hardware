@@ -52,7 +52,21 @@ done, what was learned, and the numbers measured that day.
   corrupted words: JTAGG registers TDI and samples TDO on the falling
   edge (B-0044, the first defect found on the i9); fixed as LiteX does.
 - REPL (#24): cycles from rdtime (Linux allows only time in U-mode),
-  bench sleep for the timer wake-up latency.
+  bench sleep for the timer wake-up latency, bench dhrystone (riscv-tests'
+  Dhrystone inside the REPL, U-mode).
+- L8 (#7): a 32 KiB unified write-through cache with SDRAM line reads
+  (18 DP16KD). It exposed B-0046 on the board (SDRAM data sampled one
+  cycle late; single reads had worked by bus hold). Barrel shifter in the
+  SoC's core (+374 LUTs); for the i9 MCU it gave CPI 2.69 -> 2.67 for +449
+  LUTs and stays off there (#23).
+- L9 (#29): Linux boots to the REPL on the SoC RTL in Verilator with the
+  board models, every instruction in lockstep: 39.2M instructions, 369M
+  cycles (7.4 s at 50 MHz) with the cache, 574M cycles (11.5 s) without;
+  about 25 to 37 minutes at 0.25 Mcycles/s.
+- Board, Linux with cache and barrel shifter (U-mode, rdtime x 50):
+  Dhrystone 0.203 DMIPS/MHz (2791 cycles/run, 10.2 DMIPS at 50 MHz),
+  syscall 1770 cycles, memcpy 98 cycles/word, 1 ms sleep +3 ms latency.
+  Without the cache: syscall 73 ms/1000, memcpy 64 KiB in 64 ms.
 - Testing: most defects of the day were found at S1 (models, lockstep,
   riscv-tests); S3 found the Fmax and naming problems; Verilog generation
   found a port named `time` (B-0031, now an S1 test).

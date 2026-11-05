@@ -24,6 +24,7 @@ let config =
   ; dual_read = false
   ; fetch_overlap = false
   ; ma = false
+  ; barrel_shift = false
   }
 ;;
 

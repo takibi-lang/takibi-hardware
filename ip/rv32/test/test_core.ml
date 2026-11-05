@@ -237,5 +237,6 @@ let%expect_test "random programs" =
     Rv32i: 300 programs, 40739 instructions, 0 failures
     Rv32i: 300 programs, 40739 instructions, 0 failures
     Rv32i: 300 programs, 40739 instructions, 0 failures
+    Rv32i: 300 programs, 40739 instructions, 0 failures
     |}]
 ;;

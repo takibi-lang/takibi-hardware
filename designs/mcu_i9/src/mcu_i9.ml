@@ -38,6 +38,7 @@ let config =
   ; dual_read = true
   ; fetch_overlap = true
   ; ma = true
+  ; barrel_shift = false (* evaluated for #23: CPI 2.69 -> 2.67, +449 LUTs *)
   }
 ;;
 

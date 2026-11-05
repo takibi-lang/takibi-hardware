@@ -41,6 +41,7 @@ module Config = struct
     ; dual_read : bool (* second register-file copy, 3-cycle ALU ops (#4) *)
     ; fetch_overlap : bool (* fetch the next instruction in Execute (#4) *)
     ; ma : bool (* M and A extensions, FENCE.I (#5) *)
+    ; barrel_shift : bool (* one-cycle shifts (#4, #23) *)
     }
 
   let ram_words t = t.ram_bytes / 4
@@ -95,6 +96,7 @@ let create (config : Config.t) scope (i : _ I.t) =
       ~m:config.ma
       ~a:config.ma
       ~zifencei:config.ma
+      ~barrel_shift:config.barrel_shift
       ~base:config.base
       scope
       { Rv32.Core.I.clock = i.clock
