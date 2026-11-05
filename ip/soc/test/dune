@@ -1,0 +1,6 @@
+(library
+ (name soc_test)
+ (inline_tests)
+ (libraries soc soc_model uart uart_bench hardcaml)
+ (preprocess
+  (pps ppx_hardcaml ppx_jane ppx_expect)))

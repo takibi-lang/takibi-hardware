@@ -73,17 +73,30 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | Found at | Count |
 |----------|-------|
 | S0 | 1 |
-| S1 | 17 |
+| S1 | 18 |
 | S2 | 2 (board-sim) |
 | S3 | 6 |
 | S4 | 2 |
 
-By class: testbench 16, toolchain 4, model 1, inference 1, resource 1,
+By class: testbench 17, toolchain 4, model 1, inference 1, resource 1,
 reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 1 (B-0031), reset/init 1 more (B-0035).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0038: UART test read IIR before sampling irq (argument evaluation order)
+
+- Date: 2026-11-05
+- Project: ip/soc/test/test_uart16550.ml (#28)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: "ETBEI with the FIFO empty: irq false IIR c2", an impossible
+  combination.
+- Cause: `printf ... (irq ()) (read 2)`: OCaml evaluates arguments right
+  to left, so the IIR read (which clears the THRE interrupt) ran first.
+- Fix: bind the irq sample before the read.
+- Regression: the test's expectation (irq true with IIR c2).
 
 ### B-0037: flash test fed the model the previous cycle's pins
 
