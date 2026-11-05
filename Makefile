@@ -28,13 +28,22 @@
 # The RV32I MCU on a Colorlight i9 v7.2 with the ext board (S4, by hand):
 #   make i9         build designs/mcu_i9/build/top.bit (firmware: Dhrystone)
 #   make i9-prog    build and load it over the ext board's DAPLink
-#   make i9-term    open the DAPLink serial port (I9_TTY=/dev-host/ttyACM0)
+#   make i9-term    open the DAPLink serial port (I9_TTY: the DAPLink's
+#                   by-id link, so another USB serial device does not matter)
+#
+# The Linux SoC on the Colorlight i9 (#21):
+#   make soc-i9          build designs/soc_i9/build/top.bit
+#   make soc-i9-images   the kernel, REPL, boot ROM and device tree (as linux-model)
+#   make soc-i9-sim      boot Linux on the SoC RTL with Verilator (L9, minutes)
+#   make soc-i9-flash    write the device tree, the kernel and the bitstream
+#                        into the SPI flash (then the board boots Linux)
+#   make soc-i9-prog     load the bitstream into SRAM only (flash images kept)
 # Other designs: make -C designs/<name> prog.
 
 # Serial ports: the devcontainer sees the host's /dev read-only under
 # /dev-host (devcontainer.json runArgs); device nodes there are usable.
 TTY ?= /dev-host/ttyUSB1
-I9_TTY ?= /dev-host/ttyACM0
+I9_TTY ?= $(firstword $(wildcard /dev-host/serial/by-id/usb-ARM_DAPLink*-if01) /dev-host/ttyACM0)
 
 BOARD_PROJECTS := designs/blink designs/hello designs/mcu designs/mcu_i9
 
@@ -60,6 +69,7 @@ verilate:
 
 synth:
 	@for p in $(BOARD_PROJECTS); do echo "== $$p"; $(MAKE) --no-print-directory -C $$p all || exit 1; done
+	@echo "== designs/soc_i9"; $(MAKE) --no-print-directory -C designs/soc_i9 all
 
 board-sim:
 	$(MAKE) --no-print-directory -C designs/mcu board-sim
@@ -101,8 +111,30 @@ board-sim-i9:
 
 names:
 	@for p in $(BOARD_PROJECTS); do $(MAKE) --no-print-directory -C $$p names || exit 1; done
+	@$(MAKE) --no-print-directory -C designs/soc_i9 names
 
 ci: langcheck selftest test arch-test riscv-tests linux-model board-sim netlist-sim netlist-sim-i9 board-sim-i9 verilate synth names icebram-check ecpbram-check
+
+soc-i9:
+	$(MAKE) -C designs/soc_i9
+
+soc-i9-images:
+	$(MAKE) --no-print-directory -C sw/linux images
+
+SOC_LINUX := build/linux
+soc-i9-sim: soc-i9-images
+	dune build ./designs/soc_i9/sim/main.exe ./sw/linux/boot/boot.bin
+	./_build/default/designs/soc_i9/sim/main.exe --verilator \
+	  _build/default/sw/linux/boot/boot.bin $(SOC_LINUX)/boot/soc.dtb \
+	  $(SOC_LINUX)/kernel/arch/riscv/boot/Image \
+	  --input 'help\recho hello from U-mode\r' --until 'hello from U-mode' \
+	  | tee build/soc_i9_sim.log
+
+soc-i9-flash: soc-i9
+	$(MAKE) -C designs/soc_i9 flash-images flash
+
+soc-i9-prog: soc-i9
+	$(MAKE) -C designs/soc_i9 prog
 
 mcu:
 	$(MAKE) -C designs/mcu
@@ -132,4 +164,4 @@ clean:
 	dune clean
 	@for p in $(BOARD_PROJECTS); do $(MAKE) --no-print-directory -C $$p clean; done
 
-.PHONY: versions arch-test riscv-tests linux-model board-sim board-sim-i9 netlist-sim netlist-sim-i9 mcu mcu-prog mcu-term i9 i9-prog i9-term ecpbram-check icebram-check all setup langcheck selftest test verilate synth names ci clean
+.PHONY: soc-i9 soc-i9-images soc-i9-sim soc-i9-flash soc-i9-prog versions arch-test riscv-tests linux-model board-sim board-sim-i9 netlist-sim netlist-sim-i9 mcu mcu-prog mcu-term i9 i9-prog i9-term ecpbram-check icebram-check all setup langcheck selftest test verilate synth names ci clean

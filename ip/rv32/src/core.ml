@@ -74,7 +74,8 @@
    R/W/X/U/A/D bits. Permissions, A and D are checked on every access
    against the current privilege, SUM and MXR (MPRV/MPP for data). A miss,
    or a hit that would fault, walks the page table (Ptw_l1, Ptw_l1_data,
-   Ptw_l0_data; PTE addresses are concatenations, no adder) and then either
+   Ptw_l1_check, Ptw_l0, Ptw_l0_data, Ptw_l0_check: each PTE is registered
+   before it is checked; PTE addresses are concatenations, no adder) and then either
    fills the TLB and retries or raises the page fault: a fault is always
    decided on the PTE in memory, so a PTE whose A/D bits software has just
    set (Svade) is seen without an SFENCE.VMA. SFENCE.VMA and satp writes
@@ -163,10 +164,13 @@ module State = struct
     | Div
     | Amo
     | Amo_write
+    | Mem
     | Ptw_l1
     | Ptw_l1_data
+    | Ptw_l1_check
     | Ptw_l0
     | Ptw_l0_data
+    | Ptw_l0_check
     | Halted
   [@@deriving sexp_of, compare ~localize, enumerate]
 end
@@ -258,6 +262,11 @@ let create
   let%hw mem_op = dec.load |: dec.store |: atomic in
   (* Atomics address rs1 itself (no immediate). *)
   let%hw agu = mux2 (dec.jalr |: mem_op) a pc.value +: mux2 atomic (zero 32) imm in
+  (* With [~s] a load, store or atomic accesses memory in Mem, at the
+     address registered at the end of Execute (timing: the adder no longer
+     feeds the data TLB in the same cycle). *)
+  let%hw_var maddr = Always.Variable.reg ~width:32 spec in
+  let%hw daddr = if s then maddr.value else agu in
   let%hw pc_plus4 = pc.value +:. 4 in
   let%hw jump_target =
     mux2 dec.jalr (agu.:[31, 1] @: gnd) agu
@@ -272,7 +281,7 @@ let create
     mux2 dec.lui imm (mux2 dec.auipc agu (mux2 (dec.jal |: dec.jalr) pc_plus4 alu.result))
   in
   (* Store lanes. *)
-  let%hw lane = agu.:[1, 0] in
+  let%hw lane = daddr.:[1, 0] in
   let%hw store_mask =
     mux
       size
@@ -325,6 +334,7 @@ let create
   let%hw_var mtval = Always.Variable.reg ~width:32 spec in
   let%hw_var mcycle = Always.Variable.reg ~width:64 spec in
   let%hw_var minstret = Always.Variable.reg ~width:64 spec in
+  let%hw_var retired_pending = Always.Variable.reg ~width:1 spec in
   let%hw_var priv_reg =
     Always.Variable.reg ~width:2 (Reg_spec.override spec ~clear_to:(of_int ~width:2 3))
   in
@@ -600,11 +610,11 @@ let create
   in
   let%hw data_store = dec.store |: dec.sc |: dec.amo in
   let itlb_ok, itlb_pa = lookup itlb pc.value ~is_fetch:vdd ~is_store:gnd ~eff:priv in
-  let dtlb_ok, dtlb_pa = lookup dtlb agu ~is_fetch:gnd ~is_store:data_store ~eff:data_priv in
+  let dtlb_ok, dtlb_pa = lookup dtlb daddr ~is_fetch:gnd ~is_store:data_store ~eff:data_priv in
   let%hw itlb_ok = itlb_ok in
   let%hw dtlb_ok = dtlb_ok in
   let%hw fetch_pa = mux2 fetch_xlate itlb_pa pc.value in
-  let%hw data_pa = mux2 data_xlate dtlb_pa agu in
+  let%hw data_pa = mux2 data_xlate dtlb_pa daddr in
   let%hw fetch_ready = ~:fetch_xlate |: itlb_ok in
   let%hw data_ready = ~:data_xlate |: dtlb_ok in
   (* The page-table walk: the virtual address and the kind of access
@@ -615,7 +625,8 @@ let create
   let%hw walk_fetch = walk_kind.value ==:. 0 in
   let%hw walk_store = walk_kind.value ==:. 2 in
   let%hw walk_eff = mux2 walk_fetch priv data_priv in
-  let pte = i.mem_rdata in
+  (* the PTE is registered (walk_pte) and checked in the next state *)
+  let pte = walk_pte.value in
   let%hw pte_invalid = ~:(pte.:(0)) |: (~:(pte.:(1)) &: pte.:(2)) in
   let%hw pte_leaf = pte.:(1) |: pte.:(3) in
   let%hw pte_perm_ok =
@@ -690,7 +701,7 @@ let create
   (* A: the reservation and the AMO result. *)
   let%hw_var reservation_valid = Always.Variable.reg ~width:1 spec in
   let%hw_var reservation_addr = Always.Variable.reg ~width:32 spec in
-  let%hw sc_ok = reservation_valid.value &: (reservation_addr.value ==: agu) in
+  let%hw sc_ok = reservation_valid.value &: (reservation_addr.value ==: daddr) in
   let%hw_var amo_old = Always.Variable.reg ~width:32 spec in
   let%hw amo_new =
     if ext_a
@@ -832,8 +843,10 @@ let create
              reads, so they override this cycle's increment. *)
           w 0xb00 [ mcycle <-- mcycle.value.:[63, 32] @: v ]
         ; w 0xb80 [ mcycle <-- v @: mcycle.value.:[31, 0] ]
-        ; w 0xb02 [ minstret <-- minstret.value.:[63, 32] @: v ]
-        ; w 0xb82 [ minstret <-- v @: minstret.value.:[31, 0] ]
+        ; (* the writing instruction does not count (its delayed increment
+             is dropped) *)
+          w 0xb02 [ minstret <-- minstret.value.:[63, 32] @: v; retired_pending <-- gnd ]
+        ; w 0xb82 [ minstret <-- v @: minstret.value.:[31, 0]; retired_pending <-- gnd ]
         ; w 0x14d [ stimecmp <-- stimecmp.value.:[63, 32] @: v ]
         ; w 0x15d [ stimecmp <-- v @: stimecmp.value.:[31, 0] ]
         ])
@@ -851,11 +864,38 @@ let create
   (* After a walk: retry the access (Fetch, or Execute for data), or
      raise the page fault. A fetch fault retires with instruction 0, as in
      the model. *)
-  let walk_retry = Always.[ if_ walk_fetch [ sm.set_next Fetch ] [ sm.set_next Execute ] ] in
+  let walk_retry = Always.[ if_ walk_fetch [ sm.set_next Fetch ] [ sm.set_next Mem ] ] in
   let walk_fault =
     Always.(
       (fetch_fault <-- walk_fetch)
       :: halt ~cause:walk_cause ~tval:walk_va.value Trap.page_fault)
+  in
+  (* A load, store or atomic at [daddr]: in Execute without [~s], in Mem
+     with it. A TLB miss (or a hit that would fault) walks the table first. *)
+  let mem_path =
+    Always.
+      [ if_
+          ~:data_ready
+          [ walk_va <-- daddr
+          ; walk_kind <-- mux2 data_store (of_int ~width:2 2) (of_int ~width:2 1)
+          ; sm.set_next Ptw_l1
+          ]
+          [ if_
+              (dec.load |: dec.lr)
+              [ mem_read <-- vdd
+              ; load_offset <-- lane
+              ; when_ dec.lr [ reservation_valid <-- vdd; reservation_addr <-- daddr ]
+              ; sm.set_next Load
+              ]
+              [ when_ (dec.store |: (dec.sc &: sc_ok)) [ mem_write <-- vdd ]
+              ; when_ dec.sc [ reservation_valid <-- gnd ]
+              ; if_
+                  dec.amo
+                  [ mem_read <-- vdd; sm.set_next Amo ]
+                  (complete ~result:(uresize ~:sc_ok 32) ~next:pc_plus4)
+              ]
+          ]
+      ]
   in
   Always.(
     compile
@@ -863,8 +903,14 @@ let create
          then
            proc
              [ mcycle <-- mcycle.value +:. 1
-             ; minstret
-               <-- minstret.value +: uresize (retire.value &: ~:(retire_trap.value)) 64
+             ; (* the increment is applied one cycle after the retirement
+                  (timing: the retire decision no longer feeds a 64-bit
+                  carry chain). The next instruction reads minstret in its
+                  Execute, at least two cycles later, so no CSR read can
+                  see the difference; a counter write in the same cycle
+                  wins, as before. *)
+               retired_pending <-- (retire.value &: ~:(retire_trap.value))
+             ; minstret <-- minstret.value +: uresize retired_pending.value 64
              ]
          else proc [ mcycle <--. 0; minstret <--. 0 ])
       ; sm.switch
@@ -914,22 +960,10 @@ let create
                                       (halt ~cause:(code 4) ~tval:agu Trap.misaligned_access)
                                   ]
                                   [ if_
-                                      (mem_op &: ~:data_ready)
-                                      [ walk_va <-- agu
-                                      ; walk_kind <-- mux2 data_store (of_int ~width:2 2) (of_int ~width:2 1)
-                                      ; sm.set_next Ptw_l1
-                                      ]
-                                      [ if_
-                                      (dec.load |: dec.lr)
-                                      [ mem_read <-- vdd
-                                      ; load_offset <-- lane
-                                      ; when_
-                                          dec.lr
-                                          [ reservation_valid <-- vdd
-                                          ; reservation_addr <-- agu
-                                          ]
-                                      ; sm.set_next Load
-                                      ]
+                                      mem_op
+                                      (if s
+                                       then [ maddr <-- agu; sm.set_next Mem ]
+                                       else mem_path)
                                       [ if_
                                           dec.shift
                                           [ shift_value <-- a
@@ -937,9 +971,7 @@ let create
                                             <-- (mux2 dec.op b imm).:[4, 0]
                                           ; sm.set_next Shift
                                           ]
-                                          [ when_ (dec.store |: (dec.sc &: sc_ok)) [ mem_write <-- vdd ]
-                                          ; when_ dec.sc [ reservation_valid <-- gnd ]
-                                          ; when_
+                                          [ when_
                                               dec.mret
                                               ([ mstatus_mie <-- mstatus_mpie.value
                                                ; mstatus_mpie <-- vdd
@@ -969,11 +1001,7 @@ let create
                                           ; when_ dec.sfence_vma tlb_flush
                                           ; proc
                                               (complete
-                                                 ~result:
-                                                   (mux2
-                                                      dec.csr
-                                                      csr_old
-                                                      (mux2 dec.sc (uresize ~:sc_ok 32) exec_result))
+                                                 ~result:(mux2 dec.csr csr_old exec_result)
                                                  ~next:
                                                    (mux2
                                                       dec.mret
@@ -988,11 +1016,11 @@ let create
                                                   i.mem_ready
                                                   [ overlapping <-- vdd; sm.set_next Decode ]
                                               ]
-                                          ; (* Multi-cycle M/A instructions do not
+                                          ; (* Multi-cycle M instructions do not
                                                complete here: undo the completion
                                                and go to their state. *)
                                             when_
-                                              (dec.mul |: dec.div |: dec.amo)
+                                              (dec.mul |: dec.div)
                                               [ retire <-- gnd
                                               ; rf_we <-- gnd
                                               ; pc <-- pc.value
@@ -1011,16 +1039,15 @@ let create
                                               ; div_neg_r <-- (div_signed &: msb a)
                                               ; sm.set_next Div
                                               ]
-                                          ; when_ dec.amo [ mem_read <-- vdd; sm.set_next Amo ]
                                           ]
                                       ]
                                   ]
-                                    ]
                               ]
                           ]
                       ]
                   ]
               ] )
+          ; Mem, (writes_rd <-- (dec.load |: atomic)) :: mem_path
           ; ( Shift
             , [ writes_rd <-- vdd
               ; if_
@@ -1066,29 +1093,23 @@ let create
               ] )
           ; Ptw_l1, [ mem_read <-- vdd; when_ i.mem_ready [ sm.set_next Ptw_l1_data ] ]
           ; ( Ptw_l1_data
-            , [ when_
-                  i.mem_rvalid
-                  [ if_
-                      (pte_invalid
-                       |: (pte_leaf &: (pte.:[19, 10] <>:. 0))
-                       |: (pte_leaf &: ~:pte_perm_ok))
-                      walk_fault
-                      [ if_
-                          pte_leaf
-                          (tlb_fill ~super:vdd @ walk_retry)
-                          [ walk_pte <-- pte; sm.set_next Ptw_l0 ]
-                      ]
-                  ]
+            , [ when_ i.mem_rvalid [ walk_pte <-- i.mem_rdata; sm.set_next Ptw_l1_check ] ] )
+          ; ( Ptw_l1_check
+            , [ if_
+                  (pte_invalid
+                   |: (pte_leaf &: (pte.:[19, 10] <>:. 0))
+                   |: (pte_leaf &: ~:pte_perm_ok))
+                  walk_fault
+                  [ if_ pte_leaf (tlb_fill ~super:vdd @ walk_retry) [ sm.set_next Ptw_l0 ] ]
               ] )
           ; Ptw_l0, [ mem_read <-- vdd; when_ i.mem_ready [ sm.set_next Ptw_l0_data ] ]
           ; ( Ptw_l0_data
-            , [ when_
-                  i.mem_rvalid
-                  [ if_
-                      (pte_invalid |: ~:pte_leaf |: ~:pte_perm_ok)
-                      walk_fault
-                      (tlb_fill ~super:gnd @ walk_retry)
-                  ]
+            , [ when_ i.mem_rvalid [ walk_pte <-- i.mem_rdata; sm.set_next Ptw_l0_check ] ] )
+          ; ( Ptw_l0_check
+            , [ if_
+                  (pte_invalid |: ~:pte_leaf |: ~:pte_perm_ok)
+                  walk_fault
+                  (tlb_fill ~super:gnd @ walk_retry)
               ] )
           ; Halted, []
           ]
@@ -1096,7 +1117,7 @@ let create
            not accept: nothing happens, Execute repeats with the request
            held. (The overlapped fetch withdraws instead, above.) *)
         when_
-          (sm.is Execute
+          ((sm.is Execute |: sm.is Mem)
            &: (mem_write.value |: (mem_read.value &: mem_op))
            &: ~:(i.mem_ready))
           [ retire <-- gnd
@@ -1119,7 +1140,7 @@ let create
            (mux2
               (sm.is Ptw_l0)
               ptw_l0_addr
-              (if fetch_overlap then mux2 mem_op data_pa next_pc else data_pa)))
+              (if fetch_overlap then mux2 (sm.is Execute) next_pc data_pa else data_pa)))
     else
       mux2
         (sm.is Fetch)
@@ -1140,7 +1161,7 @@ let create
   ; retire_rd = uresize rd 5
   ; retire_rd_value = rf_wdata.value
   ; retire_mem_we = mem_write.value
-  ; retire_mem_addr = agu
+  ; retire_mem_addr = daddr
   ; retire_mem_size = size
   ; retire_mem_value = mux2 (sm.is Amo_write) amo_new b
   ; retire_next_pc = retire_next_pc.value

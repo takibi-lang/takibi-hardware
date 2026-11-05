@@ -12,8 +12,7 @@
    16550A) and LSR.THRE is "FIFO empty". The THRE interrupt is raised when
    the FIFO becomes empty and when IER.ETBEI is set while it is empty;
    reading IIR while it is the reported source, or writing THR, clears it.
-   The FIFOs hold 17 bytes (16 + the showahead output register); received
-   bytes beyond that are dropped. *)
+   Received bytes beyond 16 are dropped. *)
 open! Base
 open! Hardcaml
 open Signal
@@ -58,30 +57,30 @@ let create ~clocks_per_bit scope (i : _ Regbus.I.t) ~rx =
   let fcr_write = wr 2 in
   let rx_pop = (rd 0 &: ~:dlab) -- "rx_pop" in
   let rx_fifo =
-    Fifo.create
-      ~showahead:true
-      ~capacity:16
+    Small_fifo.create
+      ~name:"rx_fifo"
+      ~depth:16
+      scope
       ~clock:i.clock
       ~clear:(i.clear |: (fcr_write &: wbyte.:(1)))
       ~wr:receiver.valid
       ~d:receiver.data
       ~rd:rx_pop
-      ()
   in
   let rx_ready = ~:(rx_fifo.empty) -- "rx_ready" in
   (* Transmitter and its FIFO *)
   let tx_pop = wire 1 in
   let tx_push = (wr 0 &: ~:dlab) -- "tx_push" in
   let tx_fifo =
-    Fifo.create
-      ~showahead:true
-      ~capacity:16
+    Small_fifo.create
+      ~name:"tx_fifo"
+      ~depth:16
+      scope
       ~clock:i.clock
       ~clear:(i.clear |: (fcr_write &: wbyte.:(2)))
       ~wr:tx_push
       ~d:wbyte
       ~rd:tx_pop
-      ()
   in
   let tx_empty = tx_fifo.empty -- "tx_empty" in
   let transmitter =

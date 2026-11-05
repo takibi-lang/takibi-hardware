@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (libraries soc soc_bench soc_model testlib hardcaml hardcaml_verilator stdio core_unix)
+ (preprocess
+  (pps ppx_jane)))

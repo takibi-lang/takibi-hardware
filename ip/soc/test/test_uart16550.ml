@@ -111,7 +111,7 @@ let%expect_test "16550: registers, setup, transmit, receive, interrupts" =
   let got = String.init 3 ~f:(fun _ -> Char.of_int_exn (read 0)) in
   let lsr_ = read 5 in
   printf "RBR: %S, then LSR %02x irq %b\n" got lsr_ (irq ());
-  (* overflow: 20 bytes in, 17 kept (16 + the showahead register) *)
+  (* overflow: 20 bytes in, 16 kept *)
   Uart_bench.Uart_line.send line "0123456789abcdefghij";
   for _ = 1 to 220 * clocks_per_bit do
     cycle ()
@@ -139,6 +139,6 @@ let%expect_test "16550: registers, setup, transmit, receive, interrupts" =
     FIFO empty again: irq true IIR c2
     received: LSR 61 irq true IIR c4
     RBR: "abc", then LSR 60 irq false
-    after 20 bytes: "0123456789abcdefg"
+    after 20 bytes: "0123456789abcdef"
     |}]
 ;;

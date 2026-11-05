@@ -1,0 +1,5 @@
+(library
+ (name soc_i9)
+ (libraries soc mcu ecp5 sdram hardcaml)
+ (preprocess
+  (pps ppx_hardcaml ppx_jane)))

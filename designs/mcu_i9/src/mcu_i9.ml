@@ -63,7 +63,7 @@ let no_reset = [ "blink"; "pll_lock_meta"; "pll_lock_sync" ]
 let create scope (i : _ I.t) =
   let clock, locked =
     if use_pll
-    then Pll.create ~fin_mhz:osc_mhz ~fout_mhz:clock_mhz ~clkin:i.clock
+    then Ecp5.Pll.create ~fin_mhz:osc_mhz ~fout_mhz:clock_mhz ~clkin:i.clock
     else i.clock, vdd
   in
   let clock = clock -- "sys_clock" in

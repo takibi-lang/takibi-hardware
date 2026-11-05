@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries soc_i9 mcu_gen soc_bench stdio core_unix.filename_unix))

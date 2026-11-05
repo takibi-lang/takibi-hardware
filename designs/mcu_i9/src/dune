@@ -1,5 +1,5 @@
 (library
  (name mcu_i9)
- (libraries mcu hardcaml)
+ (libraries mcu ecp5 hardcaml)
  (preprocess
   (pps ppx_hardcaml ppx_jane)))

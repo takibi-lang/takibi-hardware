@@ -73,17 +73,63 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | Found at | Count |
 |----------|-------|
 | S0 | 1 |
-| S1 | 20 |
+| S1 | 21 |
 | S2 | 2 (board-sim) |
-| S3 | 6 |
+| S3 | 8 |
 | S4 | 2 |
 
 By class: testbench 18, toolchain 4, model 1, inference 1, resource 1,
-reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 1 (B-0031), reset/init 1 more (B-0035), logic 1 more (B-0039).
+reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 1 more (B-0043), reset/init 1 more (B-0035), logic 2 more (B-0039, B-0041).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0043: the first SoC build ran at 34 MHz (target 50)
+
+- Date: 2026-11-05
+- Project: ip/soc, ip/rv32 (the Linux SoC on the i9, #21)
+- Found at: S3 (nextpnr: 34.27 MHz, FAIL at 50 MHz); Catchable at: S3
+- Class: fmax
+- Symptom: the SoC failed timing; each fix exposed the next path.
+- Cause, in order: (1) core address -> decode -> target ready (flash
+  streaming compare) -> core state, a combinational loop through the bus;
+  (2) the retire decision feeding the 64-bit minstret carry chain; (3) AGU
+  adder -> data TLB -> trap decision; (4) read data -> PTE checks -> page
+  fault entry; plus an unregistered LED output.
+- Fix: a request register between core and bus (one cycle per access);
+  minstret increments one cycle late (B-0041 came from this); with S-mode,
+  loads/stores/atomics use the address registered at the end of Execute
+  (a Mem state, one cycle per memory instruction); the page-table walk
+  registers each PTE before checking it; a registered LED. 52.68 MHz.
+- Regression: the build fails below the target frequency.
+
+### B-0042: anonymous flip-flops in the UART FIFOs
+
+- Date: 2026-11-05
+- Project: ip/soc (16550, #28)
+- Found at: S3 (`make names`: 24 anonymous flip-flops); Catchable at: S3
+- Class: naming
+- Symptom: the naming check failed on the SoC.
+- Cause: HardCaml's Fifo leaves its registers unnamed, even with a scope.
+- Fix: Small_fifo, a 16-entry register FIFO with every flip-flop named
+  (the FIFOs now hold exactly 16 bytes; HardCaml's held 17).
+- Regression: `make names` covers designs/soc_i9.
+
+### B-0041: delayed minstret increment counted the instruction that wrote minstret
+
+- Date: 2026-11-05
+- Project: ip/rv32 (core, timing work for the SoC, #21)
+- Found at: S1 (riscv-tests rv32mi-p-instret_overflow on the core, test
+  case 2); Catchable at: S1
+- Class: logic
+- Symptom: `csrwi minstret, 0; csrr a0, minstret` read 1.
+- Cause: to take the retire decision out of the 64-bit carry chain, the
+  increment was moved one cycle after the retirement. The write still
+  overrode the increment of its own cycle, but the writing instruction's
+  own increment now arrived in the next cycle, after the write.
+- Fix: a write to minstret/minstreth also drops the pending increment.
+- Regression: rv32mi-p-instret_overflow on the core (`make riscv-tests`).
 
 ### B-0040: SoC test handler branched one instruction short
 

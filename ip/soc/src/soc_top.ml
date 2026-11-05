@@ -99,7 +99,24 @@ let create (c : Config.t) scope (i : _ I.t) =
       ; mtime
       }
   in
-  let addr = core.mem_addr in
+  (* Bus bridge: the core's request is registered before it reaches the
+     targets, and the core's ready only says whether the register is free.
+     This cuts the combinational path core address -> decode -> target
+     ready -> core state (34 MHz without it). One more cycle per access. *)
+  let bridge_ready = wire 1 in
+  let%hw req_valid =
+    reg_fb spec ~width:1 ~f:(fun v ->
+      mux2 v (mux2 bridge_ready gnd vdd) (core.mem_read |: core.mem_write))
+  in
+  (* the payload is captured whenever the register is free (no fan-out of
+     the request decision onto ~100 enables); req_valid says if it is a
+     request *)
+  let take = ~:req_valid in
+  let%hw req_write = reg spec ~enable:take core.mem_write in
+  let%hw req_addr = reg spec ~enable:take core.mem_addr in
+  let%hw req_wdata = reg spec ~enable:take core.mem_wdata in
+  let%hw req_wmask = reg spec ~enable:take core.mem_wmask in
+  let addr = req_addr in
   let target =
     mux2
       addr.:(31)
@@ -117,16 +134,16 @@ let create (c : Config.t) scope (i : _ I.t) =
     -- "target"
   in
   let is t = target ==:. t in
-  let read = core.mem_read
-  and write = core.mem_write in
+  let read = req_valid &: ~:req_write
+  and write = req_valid &: req_write in
   let bus t =
     { Regbus.I.clock = i.clock
     ; clear = i.clear
     ; read = read &: is t
     ; write = write &: is t
     ; addr = addr.:[23, 0]
-    ; wdata = core.mem_wdata
-    ; wmask = core.mem_wmask
+    ; wdata = req_wdata
+    ; wmask = req_wmask
     }
   in
   (* Boot ROM *)
@@ -175,8 +192,8 @@ let create (c : Config.t) scope (i : _ I.t) =
       ; read = read &: is Target.sdram
       ; write = write &: is Target.sdram
       ; addr = addr.:[22, 0]
-      ; wdata = core.mem_wdata
-      ; wmask = core.mem_wmask
+      ; wdata = req_wdata
+      ; wmask = req_wmask
       ; dq_in = i.sdram_dq_in
       }
   in
@@ -184,7 +201,8 @@ let create (c : Config.t) scope (i : _ I.t) =
   let ready =
     mux2 (is Target.sdram) sdram.ready (mux2 (is Target.flash) flash.ready vdd) -- "bus_ready"
   in
-  mem_ready <== ready;
+  bridge_ready <== ready;
+  mem_ready <== ~:req_valid;
   let accepted_read = read &: ready in
   let owner = reg spec ~enable:accepted_read target -- "read_owner" in
   let device_read =

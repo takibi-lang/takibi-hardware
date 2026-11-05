@@ -326,13 +326,13 @@ let%expect_test "Sv32: random programs under random page tables, in lockstep" =
   (* memory with random wait states (#26) *)
   run_random ~wait_states:true ~dual_read:true ~fetch_overlap:true ~seed:4 ();
   [%expect {|
-    100 programs, 53587 instructions, 0 failures
+    100 programs, 53580 instructions, 0 failures
     entries: M:11 M:12 M:13 M:15 M:2 M:3 M:8 M:9 S:12 S:13 S:15 S:2 S:8 S:9
-    100 programs, 52679 instructions, 0 failures
+    100 programs, 52700 instructions, 0 failures
     entries: M:11 M:12 M:13 M:15 M:2 M:3 M:8 M:9 S:12 S:13 S:15 S:2 S:8 S:9
-    100 programs, 53714 instructions, 0 failures
+    100 programs, 53693 instructions, 0 failures
     entries: M:11 M:12 M:13 M:15 M:2 M:3 M:8 M:9 S:12 S:13 S:15 S:2 S:8 S:9
-    100 programs, 53713 instructions, 0 failures
+    100 programs, 53748 instructions, 0 failures
     entries: M:11 M:12 M:13 M:15 M:2 M:3 M:8 M:9 S:12 S:13 S:15 S:2 S:8 S:9
     |}]
 ;;

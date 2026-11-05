@@ -79,12 +79,17 @@ let run
   ?(max_cycles = 1_000_000)
   ?(lockstep = true)
   ?(trace = fun (_ : Rv32_model.Machine.retire) -> ())
+  ?(on_output = fun (_ : char) -> ())
+  ?sim
   ~boot_rom
   ~flash
   ()
   =
-  let scope = Scope.create ~flatten_design:true () in
-  let sim = Sim.create (Top.create (config ~boot_rom) scope) in
+  let sim =
+    match sim with
+    | Some sim -> sim
+    | None -> Sim.create (Top.create (config ~boot_rom) (Scope.create ~flatten_design:true ()))
+  in
   let i = Cyclesim.inputs sim in
   let pins = Cyclesim.outputs sim
   and o = Cyclesim.outputs ~clock_edge:Before sim in
@@ -127,9 +132,17 @@ let run
   i.clear := Bits.vdd;
   Cyclesim.cycle sim;
   i.clear := Bits.gnd;
+  (* the output, re-read only when it grew *)
+  let out = ref "" in
+  let stop = ref false in
   let rec loop cycle =
-    let out = Buffer.contents decoder.out in
-    if cycle >= max_cycles || until out || Option.is_some ls.mismatch || Bits.to_bool !(pins.core.halted)
+    if Buffer.length decoder.out <> String.length !out
+    then (
+      out := Buffer.contents decoder.out;
+      on_output !out.[String.length !out - 1];
+      if until !out then stop := true);
+    let out = !out in
+    if cycle >= max_cycles || !stop || Option.is_some ls.mismatch || Bits.to_bool !(pins.core.halted)
     then cycle
     else (
       (* the models see this cycle's (registered) pins *)

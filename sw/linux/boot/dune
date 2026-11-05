@@ -1,0 +1,20 @@
+; The Linux SoC's boot ROM (boot.S, #25), built here too so the board
+; design (designs/soc_i9) and the SoC simulations do not need the kernel
+; build; sw/linux/build-boot.sh builds the same file for the model flow.
+
+(rule
+ (targets soc_map.h)
+ (action
+  (with-stdout-to
+   soc_map.h
+   (run %{exe:../../../models/soc_model/bin/gen.exe} header))))
+
+(rule
+ (targets boot.bin boot.elf)
+ (deps boot.S link.ld soc_map.h)
+ (action
+  (progn
+   (run riscv-none-elf-gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -nostdlib
+    -nostartfiles -mno-relax -Wl,--no-warn-rwx-segments -I. -T link.ld -o boot.elf
+    boot.S)
+   (run riscv-none-elf-objcopy -O binary boot.elf boot.bin))))
