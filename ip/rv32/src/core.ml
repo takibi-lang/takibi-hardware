@@ -26,9 +26,18 @@
    missed 50 MHz, B-0024). FENCE.I ([~zifencei]) is a no-op (no
    caches).
 
-   Memory bus: [mem_addr] with [mem_read] or [mem_write] is valid for one
-   cycle; read data must be on [mem_rdata] in the next cycle. Writes carry a
-   byte-lane mask and lane-aligned data.
+   Memory bus (issue #26, Linux L4): a request ([mem_read] or [mem_write]
+   with [mem_addr], [mem_wdata], [mem_wmask]) is held until the memory
+   accepts it with [mem_ready] in the same cycle; read data comes later,
+   in a cycle with [mem_rvalid], at the earliest the cycle after the
+   acceptance. At most one read is outstanding, and the core issues no
+   request while it waits for read data. A write is done when accepted. A
+   read request that has not been accepted may be withdrawn (the
+   overlapped fetch of [~fetch_overlap] falls back to Fetch, and an
+   interrupt taken in Fetch replaces the fetch); a write never is. Block
+   RAM: [mem_ready] = 1 and [mem_rvalid] = [mem_read] delayed by one
+   cycle, which gives the cycle counts of the original one-cycle bus.
+   Writes carry a byte-lane mask and lane-aligned data.
 
    The register file is a 32 x 32 (RV32I) or 16 x 32 (RV32E) block RAM with
    a registered read port. x0 is
@@ -93,6 +102,8 @@ module I = struct
     { clock : 'a
     ; clear : 'a
     ; mem_rdata : 'a [@bits 32]
+    ; mem_ready : 'a (* the request is accepted *)
+    ; mem_rvalid : 'a (* read data on mem_rdata *)
     ; irq : 'a [@bits 3] (* software, timer, external; Zicsr only *)
     ; seip : 'a (* supervisor external interrupt (PLIC); [~s] only *)
     ; mtime : 'a [@bits 64]
@@ -154,6 +165,7 @@ module State = struct
     | Amo_write
     | Ptw_l1
     | Ptw_l1_data
+    | Ptw_l0
     | Ptw_l0_data
     | Halted
   [@@deriving sexp_of, compare ~localize, enumerate]
@@ -599,6 +611,7 @@ let create
      (0 fetch, 1 load, 2 store/AMO). *)
   let%hw_var walk_va = Always.Variable.reg ~width:32 spec in
   let%hw_var walk_kind = Always.Variable.reg ~width:2 spec in
+  let%hw_var walk_pte = Always.Variable.reg ~width:32 spec in
   let%hw walk_fetch = walk_kind.value ==:. 0 in
   let%hw walk_store = walk_kind.value ==:. 2 in
   let%hw walk_eff = mux2 walk_fetch priv data_priv in
@@ -609,7 +622,7 @@ let create
     perm_ok ~perm:(perm_of_pte pte) ~is_fetch:walk_fetch ~is_store:walk_store ~eff:walk_eff
   in
   let%hw ptw_l1_addr = (if s then satp.value.:[19, 0] else zero 20) @: walk_va.value.:[31, 22] @: zero 2 in
-  let%hw ptw_l0_addr = pte.:[29, 10] @: walk_va.value.:[21, 12] @: zero 2 in
+  let%hw ptw_l0_addr = walk_pte.value.:[29, 10] @: walk_va.value.:[21, 12] @: zero 2 in
   let%hw walk_cause =
     mux2 walk_fetch (of_int ~width:5 12) (mux2 walk_store (of_int ~width:5 15) (of_int ~width:5 13))
   in
@@ -865,13 +878,16 @@ let create
                         ~deleg:irq_deleg)
                   [ if_
                       fetch_ready
-                      [ mem_read <-- vdd; sm.set_next Decode ]
+                      [ mem_read <-- vdd; when_ i.mem_ready [ sm.set_next Decode ] ]
                       [ walk_va <-- pc.value; walk_kind <--. 0; sm.set_next Ptw_l1 ]
                   ]
               ] )
           ; ( Decode
-            , [ ir_reg <-- i.mem_rdata
-              ; sm.set_next (if dual_read then Execute else Read_rs2)
+            , [ when_
+                  i.mem_rvalid
+                  [ ir_reg <-- i.mem_rdata
+                  ; sm.set_next (if dual_read then Execute else Read_rs2)
+                  ]
               ] )
           ; Read_rs2, [ rs1_value <-- b; sm.set_next Execute ]
           ; ( Execute
@@ -966,8 +982,11 @@ let create
                                           ; when_
                                               overlap_ok
                                               [ mem_read <-- vdd
-                                              ; overlapping <-- vdd
-                                              ; sm.set_next Decode
+                                              ; (* not accepted: withdraw, fetch
+                                                   again from Fetch *)
+                                                when_
+                                                  i.mem_ready
+                                                  [ overlapping <-- vdd; sm.set_next Decode ]
                                               ]
                                           ; (* Multi-cycle M/A instructions do not
                                                complete here: undo the completion
@@ -1012,9 +1031,8 @@ let create
                   ]
               ] )
           ; ( Load
-            , [ writes_rd <-- vdd
-              ; proc (complete ~result:loaded ~next:pc_plus4)
-              ] )
+            , [ writes_rd <-- vdd; when_ i.mem_rvalid (complete ~result:loaded ~next:pc_plus4) ]
+            )
           ; ( Mul
             , [ writes_rd <-- vdd; proc (complete ~result:mul_result.value ~next:pc_plus4) ] )
           ; ( Div
@@ -1039,30 +1057,54 @@ let create
                       ]
                   ]
               ] )
-          ; Amo, [ amo_old <-- i.mem_rdata; sm.set_next Amo_write ]
+          ; ( Amo
+            , [ when_ i.mem_rvalid [ amo_old <-- i.mem_rdata; sm.set_next Amo_write ] ] )
           ; ( Amo_write
             , [ writes_rd <-- vdd
               ; mem_write <-- vdd
-              ; proc (complete ~result:amo_old.value ~next:pc_plus4)
+              ; when_ i.mem_ready (complete ~result:amo_old.value ~next:pc_plus4)
               ] )
-          ; Ptw_l1, [ mem_read <-- vdd; sm.set_next Ptw_l1_data ]
+          ; Ptw_l1, [ mem_read <-- vdd; when_ i.mem_ready [ sm.set_next Ptw_l1_data ] ]
           ; ( Ptw_l1_data
-            , [ if_
-                  (pte_invalid |: (pte_leaf &: (pte.:[19, 10] <>:. 0)) |: (pte_leaf &: ~:pte_perm_ok))
-                  walk_fault
+            , [ when_
+                  i.mem_rvalid
                   [ if_
-                      pte_leaf
-                      (tlb_fill ~super:vdd @ walk_retry)
-                      [ mem_read <-- vdd; sm.set_next Ptw_l0_data ]
+                      (pte_invalid
+                       |: (pte_leaf &: (pte.:[19, 10] <>:. 0))
+                       |: (pte_leaf &: ~:pte_perm_ok))
+                      walk_fault
+                      [ if_
+                          pte_leaf
+                          (tlb_fill ~super:vdd @ walk_retry)
+                          [ walk_pte <-- pte; sm.set_next Ptw_l0 ]
+                      ]
                   ]
               ] )
+          ; Ptw_l0, [ mem_read <-- vdd; when_ i.mem_ready [ sm.set_next Ptw_l0_data ] ]
           ; ( Ptw_l0_data
-            , [ if_
-                  (pte_invalid |: ~:pte_leaf |: ~:pte_perm_ok)
-                  walk_fault
-                  (tlb_fill ~super:gnd @ walk_retry)
+            , [ when_
+                  i.mem_rvalid
+                  [ if_
+                      (pte_invalid |: ~:pte_leaf |: ~:pte_perm_ok)
+                      walk_fault
+                      (tlb_fill ~super:gnd @ walk_retry)
+                  ]
               ] )
           ; Halted, []
+          ]
+      ; (* A load, store or atomic that Execute issues and the memory does
+           not accept: nothing happens, Execute repeats with the request
+           held. (The overlapped fetch withdraws instead, above.) *)
+        when_
+          (sm.is Execute
+           &: (mem_write.value |: (mem_read.value &: mem_op))
+           &: ~:(i.mem_ready))
+          [ retire <-- gnd
+          ; rf_we <-- gnd
+          ; pc <-- pc.value
+          ; reservation_valid <-- reservation_valid.value
+          ; reservation_addr <-- reservation_addr.value
+          ; sm.set_next Execute
           ]
       ]);
   let%hw mem_addr =
@@ -1075,7 +1117,7 @@ let create
            (sm.is Ptw_l1)
            ptw_l1_addr
            (mux2
-              (sm.is Ptw_l1_data)
+              (sm.is Ptw_l0)
               ptw_l0_addr
               (if fetch_overlap then mux2 mem_op data_pa next_pc else data_pa)))
     else

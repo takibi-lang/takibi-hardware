@@ -204,7 +204,7 @@ let random_irqs rng =
       if cycle >= start && cycle < start + len then acc lor v else acc)
 ;;
 
-let run_random ?dual_read ?fetch_overlap ?(programs = 300) ~seed () =
+let run_random ?(wait_states = false) ?dual_read ?fetch_overlap ?(programs = 300) ~seed () =
   let rng = Random.State.make [| seed |] in
   let retired = ref 0
   and failures = ref 0 in
@@ -233,6 +233,7 @@ let run_random ?dual_read ?fetch_overlap ?(programs = 300) ~seed () =
         ~m:true
         ~a:true
         ~s:true
+        ?wait_states:(if wait_states then Some (Random.State.make [| n |]) else None)
         ~irq
         ~time:(fun c -> c / divider)
         ~base:Rv32i
@@ -264,11 +265,15 @@ let run_random ?dual_read ?fetch_overlap ?(programs = 300) ~seed () =
 let%expect_test "S/U modes: random programs in lockstep" =
   run_random ~seed:1 ();
   run_random ~dual_read:true ~fetch_overlap:true ~seed:2 ();
+  (* memory with random wait states (#26) *)
+  run_random ~wait_states:true ~dual_read:true ~fetch_overlap:true ~seed:4 ();
   [%expect {|
     300 programs, 43600 instructions, 0 failures
     entries: M:11 M:2 M:3 M:8 M:9 M:irq11 M:irq3 M:irq5 M:irq7 M:irq9 S:2 S:8 S:9 S:irq1 S:irq5 S:irq9
     300 programs, 45195 instructions, 0 failures
     entries: M:11 M:2 M:3 M:8 M:9 M:irq1 M:irq11 M:irq3 M:irq5 M:irq7 M:irq9 S:2 S:8 S:9 S:irq5 S:irq9
+    300 programs, 44156 instructions, 0 failures
+    entries: M:11 M:2 M:3 M:8 M:9 M:irq1 M:irq11 M:irq3 M:irq5 M:irq7 M:irq9 S:2 S:8 S:9 S:irq1 S:irq5 S:irq9
     |}]
 ;;
 

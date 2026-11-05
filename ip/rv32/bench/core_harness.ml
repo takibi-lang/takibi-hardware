@@ -1,5 +1,9 @@
-(* Runs the bare core against an OCaml memory model with a one-cycle read
-   latency, checking every retirement in lockstep with the golden model. *)
+(* Runs the bare core against an OCaml memory model, checking every
+   retirement in lockstep with the golden model. The memory follows the
+   core's request/ready, rvalid protocol (#26): by default it accepts every
+   request at once and returns read data in the next cycle (block RAM);
+   with [~wait_states:rng] it accepts a request in a random cycle and
+   returns the data 1 to 4 cycles later. *)
 open! Base
 open! Hardcaml
 module Sim = Cyclesim.With_interface (Rv32.Core.I) (Rv32.Core.O)
@@ -55,6 +59,7 @@ let run
   ?(base = Rv32_model.Isa.Rv32e)
   ?(mem_bytes = 4096)
   ?(max_cycles = 100_000)
+  ?wait_states
   ?sim
   ?model_program
   program
@@ -75,11 +80,31 @@ let run
   Cyclesim.cycle sim;
   i.clear := Bits.gnd;
   let word addr = Stdlib.Bytes.get_int32_le mem (addr land (mem_bytes - 4)) in
-  let rec loop cycle read_data =
+  (* The outstanding read: cycles until its data, and the data. *)
+  let pending = ref None in
+  let rdata = ref 0l in
+  let rec loop cycle =
     if cycle >= max_cycles
     then { retired = lockstep.retired; interrupts = lockstep.interrupts; cycles = cycle; trap = None; mismatch = lockstep.mismatch; memory = mem; stop_value = None }
     else (
-      i.mem_rdata := Bits.of_int32 ~width:32 read_data;
+      let rvalid =
+        match !pending with
+        | Some (0, d) ->
+          rdata := d;
+          pending := None;
+          true
+        | _ -> false
+      in
+      let ready =
+        Option.is_none !pending
+        &&
+        match wait_states with
+        | None -> true
+        | Some rng -> Random.State.int rng 3 > 0
+      in
+      i.mem_rdata := Bits.of_int32 ~width:32 !rdata;
+      i.mem_rvalid := Bits.of_bool rvalid;
+      i.mem_ready := Bits.of_bool ready;
       i.irq := Bits.of_int ~width:3 (irq cycle land 7);
       i.seip := Bits.of_bool (irq cycle land 8 <> 0);
       let time_now = time cycle in
@@ -113,11 +138,11 @@ let run
         let addr = Bits.to_int !(o.mem_addr) in
         let stop =
           match stop_on_write with
-          | Some at when Bits.to_bool !(o.mem_write) && Bits.to_int !(o.mem_addr) = at ->
+          | Some at when Bits.to_bool !(o.mem_write) && ready && Bits.to_int !(o.mem_addr) = at ->
             Some (Bits.to_int !(o.mem_wdata))
           | _ -> None
         in
-        if Bits.to_bool !(o.mem_write)
+        if Bits.to_bool !(o.mem_write) && ready
         then (
           let mask = Bits.to_int !(o.mem_wmask) in
           let data = Bits.to_int !(o.mem_wdata) in
@@ -129,7 +154,17 @@ let run
                 ((addr land (mem_bytes - 4)) + lane)
                 (Char.of_int_exn ((data lsr (8 * lane)) land 0xff))
           done);
-        let next = if Bits.to_bool !(o.mem_read) then word addr else read_data in
+        (match !pending with
+         | Some (n, d) -> pending := Some (n - 1, d)
+         | None ->
+           if Bits.to_bool !(o.mem_read) && ready
+           then (
+             let delay =
+               match wait_states with
+               | None -> 1
+               | Some rng -> 1 + Random.State.int rng 4
+             in
+             pending := Some (delay - 1, word addr)));
         Cyclesim.cycle_at_clock_edge sim;
         Cyclesim.cycle_after_clock_edge sim;
         if Option.is_some stop
@@ -145,7 +180,7 @@ let run
         else if Option.is_some lockstep.mismatch
         then
           { retired = lockstep.retired; interrupts = lockstep.interrupts; cycles = cycle; trap = None; mismatch = lockstep.mismatch; memory = mem; stop_value = None }
-        else loop (cycle + 1) next))
+        else loop (cycle + 1)))
   in
-  loop 0 0l
+  loop 0
 ;;

@@ -242,7 +242,7 @@ let random_irqs rng =
       if cycle >= start && cycle < start + len then acc lor v else acc)
 ;;
 
-let run_random ?dual_read ?fetch_overlap ?tlb_entries ?(programs = 100) ~seed () =
+let run_random ?(wait_states = false) ?dual_read ?fetch_overlap ?tlb_entries ?(programs = 100) ~seed () =
   let rng = Random.State.make [| seed |] in
   let retired = ref 0
   and failures = ref 0 in
@@ -279,6 +279,7 @@ let run_random ?dual_read ?fetch_overlap ?tlb_entries ?(programs = 100) ~seed ()
         ~m:true
         ~a:true
         ~s:true
+        ?wait_states:(if wait_states then Some (Random.State.make [| n |]) else None)
         ~irq
         ~time:(fun c -> c / 3)
         ~base:Rv32i
@@ -322,12 +323,16 @@ let%expect_test "Sv32: random programs under random page tables, in lockstep" =
   run_random ~seed:1 ();
   run_random ~dual_read:true ~fetch_overlap:true ~seed:2 ();
   run_random ~dual_read:true ~fetch_overlap:true ~tlb_entries:2 ~seed:3 ();
+  (* memory with random wait states (#26) *)
+  run_random ~wait_states:true ~dual_read:true ~fetch_overlap:true ~seed:4 ();
   [%expect {|
-    100 programs, 53559 instructions, 0 failures
+    100 programs, 53587 instructions, 0 failures
     entries: M:11 M:12 M:13 M:15 M:2 M:3 M:8 M:9 S:12 S:13 S:15 S:2 S:8 S:9
-    100 programs, 52672 instructions, 0 failures
+    100 programs, 52679 instructions, 0 failures
     entries: M:11 M:12 M:13 M:15 M:2 M:3 M:8 M:9 S:12 S:13 S:15 S:2 S:8 S:9
-    100 programs, 53749 instructions, 0 failures
+    100 programs, 53714 instructions, 0 failures
+    entries: M:11 M:12 M:13 M:15 M:2 M:3 M:8 M:9 S:12 S:13 S:15 S:2 S:8 S:9
+    100 programs, 53713 instructions, 0 failures
     entries: M:11 M:12 M:13 M:15 M:2 M:3 M:8 M:9 S:12 S:13 S:15 S:2 S:8 S:9
     |}]
 ;;

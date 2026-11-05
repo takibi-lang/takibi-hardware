@@ -259,7 +259,7 @@ let random_irqs rng =
   pulses (go (Random.State.int rng 100) [])
 ;;
 
-let random_programs ?dual_read ?fetch_overlap ?(ma = false) ~base () =
+let random_programs ?(wait_states = false) ?dual_read ?fetch_overlap ?(ma = false) ~base () =
   let nregs = Rv32_model.Isa.num_regs base in
   let rng = Random.State.make [| 3 |] in
   let programs = 300 in
@@ -269,7 +269,16 @@ let random_programs ?dual_read ?fetch_overlap ?(ma = false) ~base () =
   for n = 1 to programs do
     let program = random_program ~ma rng ~nregs ~length:80 in
     let r =
-      H.run ~zicsr:true ?dual_read ?fetch_overlap ~m:ma ~a:ma ~irq:(random_irqs rng) ~base program
+      H.run
+        ~zicsr:true
+        ?dual_read
+        ?fetch_overlap
+        ~m:ma
+        ~a:ma
+        ?wait_states:(if wait_states then Some (Random.State.make [| n |]) else None)
+        ~irq:(random_irqs rng)
+        ~base
+        program
     in
     retired := !retired + r.retired;
     interrupts := !interrupts + r.interrupts;
@@ -300,11 +309,15 @@ let%expect_test "random programs with CSRs and interrupts" =
   random_programs ~dual_read:true ~base:Rv32i ();
   random_programs ~dual_read:true ~fetch_overlap:true ~base:Rv32i ();
   random_programs ~dual_read:true ~fetch_overlap:true ~ma:true ~base:Rv32i ();
+  random_programs ~wait_states:true ~base:Rv32e ();
+  random_programs ~wait_states:true ~dual_read:true ~fetch_overlap:true ~ma:true ~base:Rv32i ();
   [%expect {|
     Rv32e: 300 programs, 37701 instructions, 1014 interrupts, 0 failures
     Rv32i: 300 programs, 49918 instructions, 1682 interrupts, 0 failures
     Rv32i: 300 programs, 49569 instructions, 1594 interrupts, 0 failures
     Rv32i: 300 programs, 48529 instructions, 1335 interrupts, 0 failures
     Rv32i: 300 programs, 50415 instructions, 1617 interrupts, 0 failures
+    Rv32e: 300 programs, 38497 instructions, 1212 interrupts, 0 failures
+    Rv32i: 300 programs, 51540 instructions, 1900 interrupts, 0 failures
     |}]
 ;;

@@ -4,7 +4,7 @@
    later privilege and virtual-memory) behaviour.
 
      run.exe DIR...          on the golden model
-     run.exe --core DIR...   on the core (i9 configuration with M, A and
+     run.exe --core DIR...   on the core, memory with random wait states, (i9 configuration with M, A and
                              S/U modes), in lockstep with the model (#5,
                              #6; `p` and `v` tests) *)
 open! Base
@@ -34,6 +34,7 @@ let run_core dir name ~tohost =
       ~mem_base:0x8000_0000
       ~mem_bytes
       ~max_cycles:5_000_000
+      ~wait_states:(Random.State.make [| String.hash name |])
       ~stop_on_write:tohost
       (words_of_file (dir ^ "/" ^ name ^ ".bin"))
   in

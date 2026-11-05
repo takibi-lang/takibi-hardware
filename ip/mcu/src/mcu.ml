@@ -84,6 +84,9 @@ let create (config : Config.t) scope (i : _ I.t) =
   let spec = Reg_spec.create ~clock:i.clock ~clear () in
   let%hw mem_rdata = wire 32 in
   let%hw irq = wire 3 in
+  (* Block RAM: every request is accepted at once, read data comes in the
+     next cycle (the core's bus protocol, #26). *)
+  let%hw core_rvalid = wire 1 in
   let core =
     Rv32.Core.hierarchical
       ~zicsr:config.zicsr
@@ -94,8 +97,17 @@ let create (config : Config.t) scope (i : _ I.t) =
       ~zifencei:config.ma
       ~base:config.base
       scope
-      { Rv32.Core.I.clock = i.clock; clear; mem_rdata; irq; seip = gnd; mtime = zero 64 }
+      { Rv32.Core.I.clock = i.clock
+      ; clear
+      ; mem_rdata
+      ; mem_ready = vdd
+      ; mem_rvalid = core_rvalid
+      ; irq
+      ; seip = gnd
+      ; mtime = zero 64
+      }
   in
+  core_rvalid <== (reg spec core.mem_read -- "core_rvalid_q");
   let addr = core.mem_addr in
   let%hw is_io = addr.:(28) in
   let%hw word = addr.:[word_bits + 1, 2] in
