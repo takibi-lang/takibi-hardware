@@ -5,7 +5,7 @@
      0x0000_0000  boot ROM (LUTs; [boot_rom] words, aliased in 64 KiB)
      0x0200_0000  CLINT            0x0c00_0000  PLIC
      0x1000_0000  UART (16550)     0x2000_0000  SPI flash window (8 MiB)
-     0x8000_0000  SDRAM (8 MiB)
+     0x8000_0000  SDRAM (8 MiB), through a 32 KiB unified cache (#7, L8)
 
    The decoder looks at the address bits that tell the regions apart (31,
    29, 28, 27, 25, in that order; anything else is the boot ROM). The core's
@@ -183,23 +183,44 @@ let create (c : Config.t) scope (i : _ I.t) =
       ; miso = i.flash_miso
       }
   in
+  (* SDRAM behind the cache (#7, L8) *)
+  let cache_o = Cache.O.Of_signal.wires () in
   let sdram =
     Sdram.Sdram_ctrl.hierarchical
       c.sdram
       scope
       { Sdram.Sdram_ctrl.I.clock = i.clock
       ; clear = i.clear
+      ; read = cache_o.mem_read
+      ; write = cache_o.mem_write
+      ; burst = cache_o.mem_burst
+      ; addr = cache_o.mem_addr
+      ; wdata = cache_o.mem_wdata
+      ; wmask = cache_o.mem_wmask
+      ; dq_in = i.sdram_dq_in
+      }
+  in
+  let cache =
+    Cache.hierarchical
+      scope
+      { Cache.I.clock = i.clock
+      ; clear = i.clear
       ; read = read &: is Target.sdram
       ; write = write &: is Target.sdram
       ; addr = addr.:[22, 0]
       ; wdata = req_wdata
       ; wmask = req_wmask
-      ; dq_in = i.sdram_dq_in
+      ; mem_ready = sdram.ready
+      ; mem_word_valid = sdram.word_valid
+      ; mem_word_index = sdram.word_index
+      ; mem_rdata = sdram.rdata
+      ; mem_rvalid = sdram.rvalid
       }
   in
+  Cache.O.Of_signal.assign cache_o cache;
   (* Handshake *)
   let ready =
-    mux2 (is Target.sdram) sdram.ready (mux2 (is Target.flash) flash.ready vdd) -- "bus_ready"
+    mux2 (is Target.sdram) cache.ready (mux2 (is Target.flash) flash.ready vdd) -- "bus_ready"
   in
   bridge_ready <== ready;
   mem_ready <== ~:req_valid;
@@ -211,11 +232,11 @@ let create (c : Config.t) scope (i : _ I.t) =
   let device_rvalid = reg spec device_read -- "device_rvalid" in
   let owner_is t = owner ==:. t in
   mem_rvalid
-  <== (device_rvalid |: (owner_is Target.flash &: flash.rvalid) |: (owner_is Target.sdram &: sdram.rvalid));
+  <== (device_rvalid |: (owner_is Target.flash &: flash.rvalid) |: (owner_is Target.sdram &: cache.rvalid));
   mem_rdata
   <== mux
         owner
-        [ rom_data; clint.rdata; plic.rdata; uart.rdata; flash.rdata; sdram.rdata; zero 32; zero 32 ];
+        [ rom_data; clint.rdata; plic.rdata; uart.rdata; flash.rdata; cache.rdata; zero 32; zero 32 ];
   irq <== (plic.irq.:(0) @: clint.mtip @: clint.msip);
   seip <== plic.irq.:(1);
   mtime <== clint.mtime;

@@ -9,12 +9,17 @@
 
    SDRAM I/O timing (board-level, EXPERIMENT switches below): the SDRAM
    clock is the system clock inverted through an ODDRX1F, so commands and
-   write data launched on our rising edge are sampled by the SDRAM half a
-   period later. With CAS latency 2 the read data is valid from about
-   56 ns to 72 ns after the rising edge that launched READ; it is captured
-   on our falling edge at 70 ns (a negative-edge register here) and handed
-   to the controller at 80 ns: read_latency 3 in the controller's terms.
-     EXPERIMENT=sdram-rise   capture on the rising edge at 60 ns instead
+   write data launched on our rising edge (t0) are sampled by the SDRAM at
+   its edge T0 = t0 + 10 ns. With CAS latency 2 the data is driven tAC
+   (<= 6 ns) after T1 = t0 + 30 ns and held tOH (2.5 ns) after T2 =
+   t0 + 50 ns: valid from about 36 to 52 ns, plus the board's delays. It
+   is captured on our falling edge at 50 ns (a negative-edge register
+   here) and handed to the controller at 60 ns: read_latency 2. (The first
+   version counted CL from T2 and sampled at 70 ns, one word late: single
+   reads still worked because the bus held the last value, line reads were
+   off by one word on the board, B-0046.)
+     EXPERIMENT=sdram-late   capture at 70 ns (read_latency 3), as before
+     EXPERIMENT=sdram-rise   capture on the rising edge at 60 ns
                              (read_latency 2)
      EXPERIMENT=sdram-clk    SDRAM clock in phase with ours (not inverted)
 
@@ -32,6 +37,7 @@ let baud = 115_200
 let experiment = Sys.getenv "EXPERIMENT"
 let is_experiment e = Option.equal String.equal experiment (Some e)
 let capture_rising = is_experiment "sdram-rise"
+let late = is_experiment "sdram-late"
 let clock_in_phase = is_experiment "sdram-clk"
 
 let config ~boot_rom =
@@ -42,7 +48,7 @@ let config ~boot_rom =
       Sdram.Sdram_ctrl.Config.create
         ~clock_mhz
         ~cas_latency:2
-        ~read_latency:(if capture_rising then 2 else 3)
+        ~read_latency:(if late then 3 else 2)
         ()
   ; tlb_entries = 8
   }
@@ -78,7 +84,9 @@ module O = struct
 end
 
 (* Registers without a reset (power-up values for the generator). *)
-let no_reset = [ "blink"; "pll_lock_meta"; "pll_lock_sync"; "sdram_dq_capture"; "led_q" ]
+let no_reset =
+  [ "blink"; "pll_lock_meta"; "pll_lock_sync"; "led_q" ]
+  @ if capture_rising then [] else [ "sdram_dq_capture" ]
 
 let create ~boot_rom scope (i : _ I.t) =
   let clock, locked = Ecp5.Pll.create ~fin_mhz:osc_mhz ~fout_mhz:clock_mhz ~clkin:i.clock in

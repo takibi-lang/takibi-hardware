@@ -40,8 +40,8 @@ let%expect_test "random accesses at 50 MHz" =
        ~seed:2
        ());
   [%expect {|
-    3000 operations, 2202 SDRAM reads, 1496 writes, refreshes>0=true; 0 data errors, 0 violations
-    1000 operations, 743 SDRAM reads, 464 writes, refreshes>0=true; 0 data errors, 0 violations
+    3000 operations, 5707 SDRAM reads, 1531 writes, refreshes>0=true; 0 data errors, 0 violations
+    1000 operations, 1990 SDRAM reads, 462 writes, refreshes>0=true; 0 data errors, 0 violations
     |}]
 ;;
 
@@ -60,16 +60,16 @@ let%expect_test "negative: the checks fail" =
   show
     (S.run ~model_read_latency:(config.read_latency + 1) ~config ~clock_mhz:50 ~operations:300 ~seed:5 ());
   [%expect {|
-    300 operations, 235 SDRAM reads, 144 writes, refreshes>0=true; 0 data errors, 3 violations
+    300 operations, 588 SDRAM reads, 162 writes, refreshes>0=true; 0 data errors, 4 violations
       cycle 10808: no AUTO REFRESH for 15640 ns (tREFI 15625)
       cycle 11590: no AUTO REFRESH for 15640 ns (tREFI 15625)
-    300 operations, 227 SDRAM reads, 154 writes, refreshes>0=true; 0 data errors, 20 violations
+    300 operations, 524 SDRAM reads, 151 writes, refreshes>0=true; 0 data errors, 20 violations
       cycle 10001: command 2 during the 200 us power-up
       cycle 10002: command 1 during the 200 us power-up
-    300 operations, 225 SDRAM reads, 146 writes, refreshes>0=true; 5 data errors, 20 violations
+    300 operations, 600 SDRAM reads, 149 writes, refreshes>0=true; 5 data errors, 20 violations
       read 0x000004: got 0xdeadbeef, expected 0x00000000
-      read 0x54a7ec: got 0xdeadbeef, expected 0x00000000
-      cycle 10053: bus contention: controller drives DQ during read data
-      cycle 10127: bus contention: controller drives DQ during read data
+      read 0x0003b4: got 0xdeadbeef, expected 0x00000000
+      cycle 10046: bus contention: controller drives DQ during read data
+      cycle 10101: bus contention: controller drives DQ during read data
     |}]
 ;;

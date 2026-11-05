@@ -22,8 +22,9 @@ CLOCK_MHZ = $$($(EXE) clock-mhz)
 PNR      = nextpnr-ecp5 -q --45k --package CABGA381 --speed 6 --freq $(CLOCK_MHZ) --lpf $(LPF)
 # Raise deliberately and note why in HISTORY.md.
 MAX_LC   := 9000
-# The boot ROM (Yosys infers a DP16KD for it).
-EXPECT_BRAM := 1
+# The boot ROM (Yosys infers a DP16KD for it), the cache: 16 for data and
+# 1 for the tags.
+EXPECT_BRAM := 18
 FLASH_DTB := 0x200000
 FLASH_KERNEL := 0x210000
 

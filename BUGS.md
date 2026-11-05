@@ -76,14 +76,39 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | S1 | 22 |
 | S2 | 2 (board-sim) |
 | S3 | 8 |
-| S4 | 3 |
+| S4 | 4 |
 
 By class: testbench 19, toolchain 4, model 1, inference 1, resource 1,
-reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 1 more (B-0043), reset/init 1 more (B-0035), logic 2 more (B-0039, B-0041), io/pinout 1 (B-0044).
+reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 1 more (B-0043), reset/init 1 more (B-0035), logic 2 more (B-0039, B-0041), io/pinout 2 (B-0044, B-0046).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0046: SDRAM read data sampled one cycle late on the board
+
+- Date: 2026-11-05
+- Project: designs/soc_i9 (SDRAM I/O timing, #21, #7)
+- Found at: S4 (the memtest boot ROM with the cache: 7 of 8 words wrong,
+  each the next word's value); Catchable at: S4 only (see below)
+- Class: io/pinout (board-level timing)
+- Symptom: line reads (eight READs on consecutive cycles) returned word
+  k + 1 in slot k; the same with capture at 60 or 70 ns. Linux without the
+  cache had booted on the board with the same setting.
+- Cause: the timing estimate counted the CAS latency from the wrong edge:
+  with CL 2 the data is driven after T1 and is valid at T2 (36..52 ns
+  after our launching edge), not after T2. We sampled at 70 ns. Single
+  reads still worked because the SDRAM releases the bus and the line
+  keeps the last value for a while; consecutive reads have the next word
+  there instead.
+- Fix: capture on the falling edge at 50 ns, read_latency 2 (memtest:
+  0 errors with line reads; EXPERIMENT=sdram-late restores the old
+  setting).
+- Regression: the memtest boot ROM on the board (the cache makes it use
+  line reads). No simulation stage can catch it: the SDRAM model takes the
+  read latency as a parameter of the board, and the choice of that number
+  is the error. A written timing derivation (now in soc_i9.ml) is the
+  cheaper check.
 
 ### B-0045: JTAG test model presented TDI one cycle early
 

@@ -12,6 +12,11 @@
    is done. Addresses are byte addresses inside the 8 MiB; word address
    bits 9..2 are the column, 11..10 the bank, 22..12 the row.
 
+   Line reads ([burst] with [read], for the cache, #7 L8): the eight words
+   of the 32-byte line holding [addr], as eight READ commands on
+   consecutive cycles in the open row (the last with auto-precharge); each
+   word comes with [word_valid] and its [word_index], then [rvalid].
+
    Pins: [cmd] is RAS#, CAS#, WE# (registered, like [a], [ba], [dq_out],
    [dq_oe]); [dq_in] is the data bus as seen by the controller.
    [read_latency] is the number of cycles from the cycle in which READ is
@@ -73,6 +78,7 @@ module I = struct
     ; clear : 'a
     ; read : 'a
     ; write : 'a
+    ; burst : 'a (* with read: the whole 32-byte line *)
     ; addr : 'a [@bits 23]
     ; wdata : 'a [@bits 32]
     ; wmask : 'a [@bits 4]
@@ -86,6 +92,8 @@ module O = struct
     { ready : 'a
     ; rvalid : 'a
     ; rdata : 'a [@bits 32]
+    ; word_valid : 'a (* a word of a line read, in rdata *)
+    ; word_index : 'a [@bits 3]
     ; cmd : 'a [@bits 3]
     ; a : 'a [@bits 11]
     ; ba : 'a [@bits 2]
@@ -105,6 +113,8 @@ module State = struct
     | Idle
     | Activate
     | Read_wait
+    | Burst
+    | Burst_wait
     | Respond
     | Wait
   [@@deriving sexp_of, compare ~localize, enumerate]
@@ -143,6 +153,18 @@ let create (c : Config.t) scope (i : _ I.t) =
   let dq_oe = reg "dq_oe" 1 in
   (* The accepted request. *)
   let op_write = reg "op_write" 1 in
+  let op_burst = reg "op_burst" 1 in
+  let burst_col = reg "burst_col" 3 in
+  let words = reg "burst_words" 4 in
+  let word_valid = reg "word_valid" 1 in
+  let word_index = reg "word_index" 3 in
+  (* READ commands of a burst, delayed to the cycle their data is sampled *)
+  let issued = Always.Variable.wire ~default:gnd in
+  let in_flight =
+    reg_fb spec ~width:(c.read_latency + 1) ~f:(fun d -> d.:[c.read_latency - 1, 0] @: issued.value)
+    -- "burst_in_flight"
+  in
+  let data_now = msb in_flight -- "burst_data_now" in
   let op_addr = reg "op_addr" 23 in
   let op_wdata = reg "op_wdata" 32 in
   let op_wmask = reg "op_wmask" 4 in
@@ -171,6 +193,13 @@ let create (c : Config.t) scope (i : _ I.t) =
     compile
       [ cmd <--. Cmd.nop
       ; dq_oe <-- gnd
+      ; word_valid <-- data_now
+      ; when_
+          data_now
+          [ rdata <-- i.dq_in
+          ; word_index <-- words.value.:[2, 0]
+          ; words <-- words.value +:. 1
+          ]
       ; since_refresh <-- since_refresh.value +:. 1
       ; sm.switch
           [ ( Init_wait
@@ -217,6 +246,7 @@ let create (c : Config.t) scope (i : _ I.t) =
                       (i.read |: i.write)
                       (set_cmd ~addr:(row i.addr) ~bank_:(bank i.addr) Cmd.active
                        @ [ op_write <-- i.write
+                         ; op_burst <-- (i.burst &: i.read)
                          ; op_addr <-- i.addr
                          ; op_wdata <-- i.wdata
                          ; op_wmask <-- i.wmask
@@ -229,22 +259,42 @@ let create (c : Config.t) scope (i : _ I.t) =
               ; when_
                   (count.value ==:. 0)
                   [ if_
-                      (op_write.value &: (op_wmask.value ==:. 0xf))
-                      (set_cmd
-                         ~addr:(col_addr ~ap:vdd op_addr.value)
-                         ~bank_:(bank op_addr.value)
-                         Cmd.write
-                       @ [ dq_oe <-- vdd; dq_out <-- op_wdata.value ]
-                       @ wait (Int.max c.twr_trp c.trc) Wait)
-                      (* a read, or the read of a read-modify-write: the row
-                         stays open for the write *)
-                      (set_cmd
-                         ~addr:(col_addr ~ap:~:(op_write.value) op_addr.value)
-                         ~bank_:(bank op_addr.value)
-                         Cmd.read
-                       @ [ count <--. c.read_latency; sm.set_next Read_wait ])
+                      op_burst.value
+                      [ burst_col <--. 0; words <--. 0; sm.set_next Burst ]
+                      [ if_
+                          (op_write.value &: (op_wmask.value ==:. 0xf))
+                          (set_cmd
+                             ~addr:(col_addr ~ap:vdd op_addr.value)
+                             ~bank_:(bank op_addr.value)
+                             Cmd.write
+                           @ [ dq_oe <-- vdd; dq_out <-- op_wdata.value ]
+                           @ wait (Int.max c.twr_trp c.trc) Wait)
+                          (* a read, or the read of a read-modify-write: the
+                             row stays open for the write *)
+                          (set_cmd
+                             ~addr:(col_addr ~ap:~:(op_write.value) op_addr.value)
+                             ~bank_:(bank op_addr.value)
+                             Cmd.read
+                           @ [ count <--. c.read_latency; sm.set_next Read_wait ])
+                      ]
                   ]
               ] )
+          ; ( Burst
+            , (* one READ per cycle, columns line + 0..7, the last closes the
+                 row *)
+              set_cmd
+                ~addr:
+                  ((burst_col.value ==:. 7)
+                   @: zero 2
+                   @: op_addr.value.:[9, 5]
+                   @: burst_col.value)
+                ~bank_:(bank op_addr.value)
+                Cmd.read
+              @ [ issued <-- vdd
+                ; burst_col <-- burst_col.value +:. 1
+                ; when_ (burst_col.value ==:. 7) [ sm.set_next Burst_wait ]
+                ] )
+          ; Burst_wait, [ when_ (words.value ==:. 8) [ sm.set_next Respond ] ]
           ; ( Read_wait
             , [ count <-- count.value -:. 1
               ; when_
@@ -269,6 +319,8 @@ let create (c : Config.t) scope (i : _ I.t) =
   { O.ready
   ; rvalid = sm.is Respond
   ; rdata = rdata.value
+  ; word_valid = word_valid.value
+  ; word_index = word_index.value
   ; cmd = cmd.value
   ; a = a.value
   ; ba = ba.value

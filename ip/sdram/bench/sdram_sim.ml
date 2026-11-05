@@ -76,10 +76,12 @@ let run
     done;
     let addr = random_addr () in
     let write = Random.State.bool rng in
+    let burst = (not write) && Random.State.int rng 3 = 0 in
     let wdata = Random.State.bits rng lor (Random.State.int rng 4 lsl 30) in
     let wmask = if Random.State.bool rng then 0xf else Random.State.int rng 16 in
     i.read := Bits.of_bool (not write);
     i.write := Bits.of_bool write;
+    i.burst := Bits.of_bool burst;
     i.addr := Bits.of_int ~width:23 addr;
     i.wdata := Bits.of_int ~width:32 wdata;
     i.wmask := Bits.of_int ~width:4 wmask;
@@ -89,6 +91,7 @@ let run
     step ();
     i.read := Bits.gnd;
     i.write := Bits.gnd;
+    i.burst := Bits.gnd;
     let old = Hashtbl.find reference addr |> Option.value ~default:0 in
     if write
     then (
@@ -98,6 +101,28 @@ let run
           acc lor (src land (0xff lsl (8 * k))))
       in
       Hashtbl.set reference ~key:addr ~data:merged)
+    else if burst
+    then (
+      (* the eight words of the line, in order, then rvalid *)
+      let line = addr land lnot 0x1f in
+      let seen = ref 0 in
+      while not (Bits.to_bool !(o.rvalid)) do
+        if Bits.to_bool !(o.word_valid)
+        then (
+          let k = Bits.to_int !(o.word_index) in
+          let a = line + (4 * k) in
+          let expected = Hashtbl.find reference a |> Option.value ~default:0 in
+          let got = Bits.to_int !(o.rdata) in
+          if (k <> !seen || got <> expected) && List.length !data_errors < 5
+          then
+            data_errors
+            := Printf.sprintf "line 0x%06x word %d (expected %d): got 0x%08x, expected 0x%08x" line k !seen got expected
+               :: !data_errors;
+          Int.incr seen);
+        step ()
+      done;
+      if !seen <> 8 && List.length !data_errors < 5
+      then data_errors := Printf.sprintf "line read: %d words" !seen :: !data_errors)
     else (
       while not (Bits.to_bool !(o.rvalid)) do
         step ()
