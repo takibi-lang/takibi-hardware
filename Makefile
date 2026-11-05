@@ -35,7 +35,7 @@
 #   make soc-i9          build designs/soc_i9/build/top.bit
 #   make soc-i9-images   the kernel, REPL, boot ROM and device tree (as linux-model)
 #   make soc-i9-sim      boot Linux on the SoC RTL with Verilator (L9, minutes)
-#   make soc-i9-flash    write the device tree, the kernel and the bitstream
+#   make soc-i9-flash    write the bitstream, the device tree and the kernel
 #                        into the SPI flash (then the board boots Linux)
 #   make soc-i9-prog     load the bitstream into SRAM only (flash images kept)
 # Other designs: make -C designs/<name> prog.
@@ -131,7 +131,7 @@ soc-i9-sim: soc-i9-images
 	  | tee build/soc_i9_sim.log
 
 soc-i9-flash: soc-i9
-	$(MAKE) -C designs/soc_i9 flash-images flash
+	$(MAKE) -C designs/soc_i9 flash
 
 soc-i9-prog: soc-i9
 	$(MAKE) -C designs/soc_i9 prog

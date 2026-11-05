@@ -3,6 +3,43 @@
 A dated log of the project, newest entry first. Each entry records what was
 done, what was learned, and the numbers measured that day.
 
+## 2026-11-05: Linux L2-L7 in hardware, the SoC on the i9 at 50 MHz (#21)
+
+- Board: the Colorlight i9 arrived; the MCU loads over the ext board's
+  DAPLink from the devcontainer (`make i9-prog`), Dhrystone prints 0.385
+  DMIPS/MHz on hardware as in simulation. I9_TTY now uses the DAPLink's
+  by-id link (a Raspberry Pi Debug Probe is ttyACM0 here).
+- L2/L3 (#6): S/U modes, delegation, S-mode CSRs, SRET, Sstc, counter
+  enables, Sv32 with I/D TLBs (8 entries, direct mapped) and a page-table
+  walker (Svade; faults are decided on the PTE in memory). riscv-tests on
+  the core in lockstep: 139/139 (p and v environments, rv32mi, rv32si).
+  Random lockstep suites: S/U (test_smode.ml) and Sv32 under random page
+  tables (test_mmu.ml), 0 failures. No RTL defect in the MMU reached
+  lockstep; the random tests' own defects were B-0027..B-0030, B-0032..34.
+- L4 (#26): request/ready + rvalid bus with wait states; block RAM keeps
+  the old cycle counts (MCU CPI unchanged); every random suite and the
+  riscv-tests on the core also run with random wait states.
+- L5 (#7): SDRAM controller (EM638325, RMW for partial writes since DQM is
+  tied low) and a command-level SDRAM model with the datasheet timing;
+  B-0035 (command register reset to MODE REGISTER SET) found by the model.
+- L6 (#27): SPI flash window with streaming of sequential words (64
+  cycles per word); W25Q64 model. B-0039 (byte addresses) found by the SoC
+  lockstep.
+- L7 (#28): CLINT, PLIC and a 16550 with 16-byte FIFOs; CLINT and PLIC
+  equal to the L0 models under random traffic.
+- SoC (ip/soc/src/soc_top.ml) with a board-level Cyclesim harness (SDRAM,
+  flash and serial-line models around it, the core in lockstep):
+  memories, UART, timer and PLIC interrupts.
+- designs/soc_i9: the SoC on the board (hand-written Verilog shell for the
+  SDRAM DQ pins and USRMCLK). Timing went from 34.3 to 50.6 MHz (B-0043:
+  bus request register, delayed minstret increment, a Mem state for
+  memory instructions with S-mode, registered PTEs). 7432 TRELLIS_COMB,
+  1 DP16KD (boot ROM). The flash image (bitstream, DTB, kernel) is one
+  file written by `make soc-i9-flash`.
+- Testing: most defects of the day were found at S1 (models, lockstep,
+  riscv-tests); S3 found the Fmax and naming problems; Verilog generation
+  found a port named `time` (B-0031, now an S1 test).
+
 ## 2026-10-29: M and A extensions in the core (#5, Linux L1)
 
 - Decoder: M, A, FENCE.I behind flags; checked against the model on 1.67M

@@ -2,16 +2,19 @@
 #
 #   make            synthesise, place and route, check resources: build/top.bit
 #   make prog       load the bitstream into the FPGA (SRAM) over the DAPLink
-#   make flash-images  write the device tree and the kernel (with the REPL as
-#                   initramfs) into the SPI flash at Soc_map's offsets
-#                   (needs `make linux-model` or `make -C sw/linux images`)
-#   make flash      write the bitstream into the SPI flash (boots on power-up)
+#   make flash      write build/flash.bin into the SPI flash: the bitstream at 0,
+#                   the device tree and the kernel (with the REPL as initramfs)
+#                   at Soc_map's offsets; the board then boots Linux on
+#                   power-up (needs the images: make -C sw/linux images)
 #
 # The top level is rtl/top.v (BB and USRMCLK) around the generated soc_board.
 ROOT     := $(abspath ../..)
 BUILD    ?= build
 EXE      := $(ROOT)/_build/default/designs/soc_i9/bin/main.exe
-BOOT     := $(ROOT)/_build/default/sw/linux/boot/boot.bin
+# The boot ROM image (a dune target): the Linux boot stub, or a bring-up
+# test, e.g. make BOOT=sw/soc_test/memtest.bin BUILD=build-memtest prog
+BOOT     ?= sw/linux/boot/boot.bin
+BOOT_BIN := $(ROOT)/_build/default/$(BOOT)
 LINUX    := $(ROOT)/build/linux
 HWSRCS   := $(shell find src bin rtl $(ROOT)/ip $(ROOT)/models -name '*.ml' -o -name dune -o -name '*.v' 2>/dev/null)
 LPF      := colorlight_i9.lpf
@@ -26,13 +29,13 @@ FLASH_KERNEL := 0x210000
 
 all: $(BUILD)/top.bit resources
 
-$(EXE) $(BOOT): $(HWSRCS) $(ROOT)/sw/linux/boot/boot.S
-	cd $(ROOT) && dune build ./designs/soc_i9/bin/main.exe ./sw/linux/boot/boot.bin
+$(EXE) $(BOOT_BIN): $(HWSRCS) $(shell find $(ROOT)/sw/linux/boot $(ROOT)/sw/soc_test -type f)
+	cd $(ROOT) && dune build ./designs/soc_i9/bin/main.exe ./$(BOOT)
 
-$(BUILD)/soc_board.v: $(EXE) $(BOOT)
+$(BUILD)/soc_board.v: $(EXE) $(BOOT_BIN)
 	@mkdir -p $(BUILD)
 	@$(ROOT)/scripts/versions.sh > $(BUILD)/versions.txt
-	$(EXE) verilog $(BOOT) > $@
+	$(EXE) verilog $(BOOT_BIN) > $@
 
 $(BUILD)/top.json: $(BUILD)/soc_board.v rtl/top.v
 	yosys -q -l $(BUILD)/yosys.log -p 'read_verilog rtl/top.v $(BUILD)/soc_board.v; synth_ecp5 -top top -json $@'
@@ -55,14 +58,20 @@ names: $(BUILD)/soc_board.v
 prog: $(BUILD)/top.bit
 	openFPGALoader -b colorlight-i9 $<
 
-flash: $(BUILD)/top.bit
-	openFPGALoader -b colorlight-i9 -f $<
+$(BUILD)/flash.bin: $(BUILD)/top.bit $(LINUX)/boot/soc.dtb $(LINUX)/kernel/arch/riscv/boot/Image
+	python3 -c 'import sys; \
+	  img = bytearray(b"\xff" * $(FLASH_KERNEL)); \
+	  bit = open(sys.argv[1], "rb").read(); dtb = open(sys.argv[2], "rb").read(); \
+	  assert len(bit) <= $(FLASH_DTB) and len(dtb) <= $(FLASH_KERNEL) - $(FLASH_DTB); \
+	  img[0:len(bit)] = bit; img[$(FLASH_DTB):$(FLASH_DTB) + len(dtb)] = dtb; \
+	  open(sys.argv[4], "wb").write(img + open(sys.argv[3], "rb").read())' \
+	  $(BUILD)/top.bit $(LINUX)/boot/soc.dtb $(LINUX)/kernel/arch/riscv/boot/Image $@
+	@ls -l $@
 
-flash-images:
-	openFPGALoader -b colorlight-i9 -f --file-type raw -o $(FLASH_DTB) $(LINUX)/boot/soc.dtb
-	openFPGALoader -b colorlight-i9 -f --file-type raw -o $(FLASH_KERNEL) $(LINUX)/kernel/arch/riscv/boot/Image
+flash: $(BUILD)/flash.bin
+	openFPGALoader -b colorlight-i9 -f $<
 
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all resources names prog flash flash-images clean
+.PHONY: all resources names prog flash clean

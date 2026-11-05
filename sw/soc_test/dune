@@ -1,0 +1,19 @@
+; Bring-up test images for the Linux SoC's boot ROM (designs/soc_i9;
+; EXPERIMENT-free: `make -C designs/soc_i9 BOOT=...`).
+
+(rule
+ (targets soc_map.h)
+ (action
+  (with-stdout-to
+   soc_map.h
+   (run %{exe:../../models/soc_model/bin/gen.exe} header))))
+
+(rule
+ (targets memtest.bin memtest.elf)
+ (deps memtest.S ../linux/boot/link.ld soc_map.h)
+ (action
+  (progn
+   (run riscv-none-elf-gcc -march=rv32ima_zicsr_zifencei -mabi=ilp32 -nostdlib
+    -nostartfiles -mno-relax -Wl,--no-warn-rwx-segments -I. -T ../linux/boot/link.ld
+    -o memtest.elf memtest.S)
+   (run riscv-none-elf-objcopy -O binary memtest.elf memtest.bin))))
