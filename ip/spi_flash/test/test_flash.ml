@@ -88,7 +88,7 @@ let run ?(corrupt_sample = false) ~seed ~reads () =
 
 let%expect_test "flash window against the W25Q64 model" =
   run ~seed:1 ~reads:2000 ();
-  [%expect {| 2000 reads, 406 transfers, 80.1 cycles per read, 0 errors, model errors: |}]
+  [%expect {| 2000 reads, 394 transfers, 79.7 cycles per read, 0 errors, model errors: |}]
 ;;
 
 let%expect_test "negative: sampling MISO a cycle late fails" =
@@ -97,6 +97,6 @@ let%expect_test "negative: sampling MISO a cycle late fails" =
     0x000004: got bf1c7b11 expected 7e39f622
     0x000008: got 77925a2f expected ee24b55e
     0x00000c: got 4b1ee705 expected 973cce0b
-    50 reads, 13 transfers, 83.6 cycles per read, 50 errors, model errors:
+    50 reads, 11 transfers, 81.1 cycles per read, 50 errors, model errors:
     |}]
 ;;
