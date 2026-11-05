@@ -15,7 +15,7 @@ type result =
   }
 [@@deriving sexp_of]
 
-let create_sim ?zicsr ?dual_read ?fetch_overlap ?m ?a ?reset_pc ~base () =
+let create_sim ?zicsr ?dual_read ?fetch_overlap ?m ?a ?s ?reset_pc ~base () =
   let scope = Scope.create ~flatten_design:true () in
   Sim.create
     ~config:Cyclesim.Config.trace_all
@@ -26,13 +26,15 @@ let create_sim ?zicsr ?dual_read ?fetch_overlap ?m ?a ?reset_pc ~base () =
        ?m
        ?a
        ?zifencei:m
+       ?s
        ?reset_pc
        ~base
        scope)
 ;;
 
 (* [model_program] (default: [program]) exists to test the checker itself.
-   [irq cycle] drives the core's 3-bit interrupt input (Zicsr);
+   [irq cycle] drives the core's 3-bit interrupt input (Zicsr) and, in
+   bit 3, SEIP ([~s]); [time cycle] is the CLINT time ([~s]);
    [checker_irq] (default [irq]) is what the lockstep checker is told, to
    test the checker itself. *)
 let run
@@ -41,6 +43,8 @@ let run
   ?fetch_overlap
   ?(m = false)
   ?(a = false)
+  ?(s = false)
+  ?(time = fun (_ : int) -> 0)
   ?(mem_base = 0)
   ?stop_on_write
   ?(irq = fun (_ : int) -> 0)
@@ -52,9 +56,9 @@ let run
   ?model_program
   program
   =
-  let sim = match sim with Some s -> s | None -> create_sim ~zicsr ?dual_read ?fetch_overlap ~m ~a ~reset_pc:mem_base ~base () in
+  let sim = match sim with Some s -> s | None -> create_sim ~zicsr ?dual_read ?fetch_overlap ~m ~a ~s ~reset_pc:mem_base ~base () in
   let lockstep =
-    Lockstep.create ~zicsr ~m ~a ~mem_base ~base ~mem_bytes ~program:(Option.value model_program ~default:program) ()
+    Lockstep.create ~zicsr ~m ~a ~s ~mem_base ~base ~mem_bytes ~program:(Option.value model_program ~default:program) ()
   in
   let mem = Bytes.make mem_bytes '\000' in
   List.iteri program ~f:(fun k w ->
@@ -62,6 +66,7 @@ let run
   let i = Cyclesim.inputs sim in
   let o = Cyclesim.outputs ~clock_edge:Before sim in
   let irq_fetch = ref 0 in
+  let time_fetch = ref 0 in
   (* One cycle of clear: registers take their reset values (pc = mem_base). *)
   i.clear := Bits.vdd;
   Cyclesim.cycle sim;
@@ -72,23 +77,35 @@ let run
     then { retired = lockstep.retired; interrupts = lockstep.interrupts; cycles = cycle; trap = None; mismatch = lockstep.mismatch; memory = mem; stop_value = None }
     else (
       i.mem_rdata := Bits.of_int32 ~width:32 read_data;
-      i.irq := Bits.of_int ~width:3 (irq cycle);
+      i.irq := Bits.of_int ~width:3 (irq cycle land 7);
+      i.seip := Bits.of_bool (irq cycle land 8 <> 0);
+      let time_now = time cycle in
+      i.time := Bits.of_int ~width:64 time_now;
       let irq_now = (Option.value checker_irq ~default:irq) cycle in
       Cyclesim.cycle_check sim;
       Cyclesim.cycle_before_clock_edge sim;
-      let boundary_irq =
-        if Bits.to_bool !(o.retire_trap) && Bits.to_int !(o.retire_cause) land 0x8000_0000 <> 0
-        then irq_now
-        else !irq_fetch
+      let irq_entry =
+        Bits.to_bool !(o.retire_trap) && Bits.to_int !(o.retire_cause) land 0x8000_0000 <> 0
       in
-      if Bits.to_bool !(o.fetch) then irq_fetch := irq_now;
+      let boundary_irq = if irq_entry then irq_now else !irq_fetch in
+      let boundary_time = if irq_entry then time_now else !time_fetch in
+      if Bits.to_bool !(o.fetch)
+      then (
+        irq_fetch := irq_now;
+        time_fetch := time_now);
       if Bits.to_bool !(o.halted)
       then (
         let trap = Bits.to_int !(o.trap) in
         Lockstep.on_halt lockstep ~trap;
         { retired = lockstep.retired; interrupts = lockstep.interrupts; cycles = cycle; trap = Some trap; mismatch = lockstep.mismatch; memory = mem; stop_value = None })
       else (
-        if Bits.to_bool !(o.retire) then Lockstep.on_retire ~irq:irq_now ~irq_fetch:boundary_irq lockstep o;
+        if Bits.to_bool !(o.retire) then Lockstep.on_retire
+            ~irq:irq_now
+            ~irq_fetch:boundary_irq
+            ~time:time_now
+            ~time_fetch:boundary_time
+            lockstep
+            o;
         let addr = Bits.to_int !(o.mem_addr) in
         let stop =
           match stop_on_write with

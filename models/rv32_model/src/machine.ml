@@ -22,7 +22,9 @@
      only); mie/mip have MSIE/MSIP (bit 3), MTIE/MTIP (7), MEIE/MEIP (11);
      mip is read only and comes from [csr_input].
    - mcycle, minstret (and h, and the user-level aliases) are read through
-     [csr_input]; writes to the machine counters are ignored.
+     [csr_input]; the model does not store them, so a write to a machine
+     counter only affects what [csr_input] returns (the core's counters in
+     lockstep; writable with [s] there). Standalone runs read zero.
    - misa, mvendorid, marchid, mimpid, mhartid read as 0 (misa reports the
      extensions with [s]). Other CSRs are illegal, as are writes to
      read-only CSRs (address bits 11..10 = 3) and accesses from a lower

@@ -8,7 +8,12 @@
    With Zicsr (issue #3): mip and the counters come from the hardware, so
    the model reads the core's values at the retiring instruction; an
    interrupt is injected into the model where the core took it (a retire
-   record with [retire_trap] and mcause bit 31). *)
+   record with [retire_trap] and mcause bit 31).
+
+   With S-mode (issue #6): the core's SEIP input and the CLINT time come
+   from the bench too ([irq] bit 3 is SEIP); which interrupt the core must
+   take at a boundary is the model's [pending_interrupt], given the inputs
+   of the cycle where the core decided. *)
 open! Base
 open! Hardcaml
 module Machine = Rv32_model.Machine
@@ -17,6 +22,7 @@ type t =
   { model : Machine.t
   ; mutable io_load_value : int
   ; mutable mip : int
+  ; mutable time : int
   ; mutable mcycle : int
   ; mutable minstret : int
   ; mutable retired : int
@@ -29,6 +35,8 @@ let csr_input t csr =
   and hi v = (v lsr 32) land 0xffff_ffff in
   match csr with
   | 0x344 -> t.mip
+  | 0xc01 -> lo t.time
+  | 0xc81 -> hi t.time
   | 0xb00 | 0xc00 -> lo t.mcycle
   | 0xb80 | 0xc80 -> hi t.mcycle
   | 0xb02 | 0xc02 -> lo t.minstret
@@ -41,6 +49,7 @@ let create
   ?(zicsr = false)
   ?(m = false)
   ?(a = false)
+  ?(s = false)
   ?(mem_base = 0)
   ~base
   ~mem_bytes
@@ -60,6 +69,7 @@ let create
             ~m
             ~a
             ~zifencei:(m || a)
+            ~s
             ~mem_base
             ~csr_input:(fun csr -> csr_input (force t) csr)
             ~base
@@ -67,6 +77,7 @@ let create
             ()
       ; io_load_value = 0
       ; mip = 0
+      ; time = 0
       ; mcycle = 0
       ; minstret = 0
       ; retired = 0
@@ -85,7 +96,8 @@ let trap_code : Machine.trap -> int = function
   | Illegal_instruction _ -> Rv32.Core.Trap.illegal
   | Misaligned_fetch _ -> Rv32.Core.Trap.misaligned_fetch
   | Misaligned_access _ -> Rv32.Core.Trap.misaligned_access
-  | Access_fault _ | Page_fault _ -> -1
+  | Page_fault _ -> Rv32.Core.Trap.page_fault
+  | Access_fault _ -> -1
 ;;
 
 (* The core's retire outputs, in the model's terms. *)
@@ -114,57 +126,58 @@ let fail t msg = if Option.is_none t.mismatch then t.mismatch <- Some msg
 
 let show r = Sexp.to_string_hum (Machine.sexp_of_retire r)
 
-(* mip as the CSR shows it, from the core's 3-bit irq input. *)
+(* mip as the CSR shows it, from the core's interrupt inputs: [irq] bits
+   0..2 are MSIP, MTIP, MEIP; bit 3 is SEIP (S-mode). *)
 let mip_of_irq irq =
-  ((irq land 1) lsl 3) lor (((irq lsr 1) land 1) lsl 7) lor (((irq lsr 2) land 1) lsl 11)
+  ((irq land 1) lsl 3)
+  lor (((irq lsr 1) land 1) lsl 7)
+  lor (((irq lsr 2) land 1) lsl 11)
+  lor (((irq lsr 3) land 1) lsl 9)
 ;;
 
-(* The interrupt the model would take at this boundary with [irq] pending:
-   external > software > timer, as the core prioritises. *)
-let expected_interrupt t ~irq =
-  let m = t.model in
-  let pending = mip_of_irq irq land m.mie in
-  if (not m.zicsr) || m.mtvec = 0 || (not m.mstatus_mie) || pending = 0
-  then None
-  else if pending land 0x800 <> 0
-  then Some 11
-  else if pending land 0x8 <> 0
-  then Some 3
-  else Some 7
+(* The interrupt the model would take at this boundary with [irq] pending
+   and [time]: the model's choice, if the target mode's vector is set. *)
+let expected_interrupt t ~irq ~time =
+  t.mip <- mip_of_irq irq;
+  t.time <- time;
+  match Machine.pending_interrupt t.model with
+  | Some code when Machine.trap_vector t.model ~cause:(0x8000_0000 lor code) <> 0 -> Some code
+  | _ -> None
 ;;
 
 (* Call in a cycle where the core's [retire] output is high; [irq] is the
    core's irq input in that cycle and [irq_fetch] the one in the Fetch
    cycle that started this instruction (where an interrupt would have been
    taken instead). *)
-let on_retire ?(irq = 0) ?(irq_fetch = 0) t (o : Bits.t ref Rv32.Core.O.t) =
+let on_retire ?(irq = 0) ?(irq_fetch = 0) ?(time = 0) ?(time_fetch = 0) t (o : Bits.t ref Rv32.Core.O.t) =
   let core = of_core o in
-  (match core.trap, expected_interrupt t ~irq:irq_fetch with
+  (match core.trap, expected_interrupt t ~irq:irq_fetch ~time:time_fetch with
    | Some cause, expected when cause land 0x8000_0000 <> 0 ->
-     if not (Option.equal Int.equal expected (Some (cause land 0xf)))
+     if not (Option.equal Int.equal expected (Some (cause land 0x1f)))
      then
        fail
          t
          (Printf.sprintf
             "retire #%d: core took interrupt %d, expected %s"
             t.retired
-            (cause land 0xf)
+            (cause land 0x1f)
             (Option.value_map expected ~default:"none" ~f:Int.to_string))
    | _, Some code ->
      fail t (Printf.sprintf "retire #%d: core missed interrupt %d" t.retired code)
    | _, None -> ());
   Option.iter core.rd_write ~f:(fun (_, v) -> t.io_load_value <- v);
   t.mip <- mip_of_irq irq;
+  t.time <- time;
   t.mcycle <- Bits.to_int !(o.csr_mcycle);
   t.minstret <- Bits.to_int !(o.csr_minstret);
   let stepped =
     match core.trap with
     | Some cause when cause land 0x8000_0000 <> 0 ->
       t.interrupts <- t.interrupts + 1;
-      (match Machine.interrupt t.model ~code:(cause land 0xf) with
+      (match Machine.interrupt t.model ~code:(cause land 0x1f) with
        | Ok r -> Ok r
        | Error msg ->
-         fail t (Printf.sprintf "retire #%d: core took interrupt %d, model: %s" t.retired (cause land 0xf) msg);
+         fail t (Printf.sprintf "retire #%d: core took interrupt %d, model: %s" t.retired (cause land 0x1f) msg);
          Ok core)
     | _ -> Machine.step t.model
   in

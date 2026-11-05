@@ -72,18 +72,53 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 
 | Found at | Count |
 |----------|-------|
-| S0 | 0 |
-| S1 | 6 |
+| S0 | 1 |
+| S1 | 7 |
 | S2 | 1 (board-sim) |
 | S3 | 6 |
 | S4 | 2 |
 
 By class: testbench 7, toolchain 4, model 1, inference 1, resource 1,
-reset/init 1, process/environment 1.
+reset/init 1, process/environment 1, logic 1, model 1 more (B-0026).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0026: model passed rv32mi instret_overflow only because its counters read zero
+
+- Date: 2026-11-05
+- Project: models/rv32_model, bench/riscv_tests, ip/rv32 (core, #6)
+- Found at: S1 (riscv-tests rv32mi on the core in lockstep: test case 2
+  failed); Catchable at: S1
+- Class: model
+- Symptom: rv32mi-p-instret_overflow passed on the model and failed on
+  the core.
+- Cause: the test writes minstret and expects to read the written value.
+  The core ignored counter writes, a choice shared with the model; the
+  model stores no counters and, standalone, reads them as zero, so the
+  expected zero matched by accident. The model run was a vacuous pass.
+- Fix: the core's mcycle/minstret(h) are writable with S-mode (the write
+  overrides that cycle's increment); the model documents that standalone
+  counter reads are zero.
+- Regression: rv32mi-p-instret_overflow on the core (`make riscv-tests`).
+
+### B-0025: S-mode registers read without a driver when S-mode is off
+
+- Date: 2026-11-05
+- Project: ip/rv32 (core, S/U modes, #6)
+- Found at: S0 (HardCaml elaboration: "circuit input signal must have a
+  port name (unassigned wire?)", width 32, building the i9 MCU);
+  Catchable at: S0
+- Class: logic
+- Symptom: every MCU test with Zicsr but without S failed to elaborate.
+- Cause: the trap vector selection (interrupts and synchronous traps) and
+  the SRET next-pc mux read stvec and sepc directly. Without [~s] these
+  registers are never assigned, so their input wire was left undriven.
+- Fix: read them through the same constant-without-S accessor as the other
+  S-mode state.
+- Regression: the existing MCU and core tests (configurations without S)
+  elaborate the core on every `make test`.
 
 ### B-0024: AMO read-modify-write in one cycle missed the 50 MHz target
 

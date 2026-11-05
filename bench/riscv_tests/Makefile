@@ -8,7 +8,7 @@ RUN := $(ROOT)/_build/default/bench/riscv_tests/run.exe
 GROUPS := rv32ui rv32um rv32ua rv32mi rv32si
 V_GROUPS := rv32ui rv32um rv32ua
 # On the core (i9 configuration with M and A) in lockstep with the model.
-CORE_GROUPS := rv32ui rv32um rv32ua
+CORE_GROUPS := rv32ui rv32um rv32ua rv32mi rv32si
 MARCH := rv32ima_zicsr_zifencei
 
 all: run

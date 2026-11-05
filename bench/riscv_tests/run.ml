@@ -4,9 +4,9 @@
    later privilege and virtual-memory) behaviour.
 
      run.exe DIR...          on the golden model
-     run.exe --core DIR...   on the i9 core configuration with M and A, in
-                             lockstep with the model (#5; `p` tests of the
-                             user-level groups: the core has no S-mode yet) *)
+     run.exe --core DIR...   on the core (i9 configuration with M, A and
+                             S/U modes), in lockstep with the model (#5,
+                             #6; `p` tests: the core has no MMU yet) *)
 open! Base
 open Stdio
 module M = Rv32_model.Machine
@@ -29,6 +29,7 @@ let run_core dir name ~tohost =
       ~fetch_overlap:true
       ~m:true
       ~a:true
+      ~s:true
       ~base:Rv32i
       ~mem_base:0x8000_0000
       ~mem_bytes
@@ -51,6 +52,9 @@ let run_core dir name ~tohost =
 ;;
 
 let core = ref false
+
+(* Tests the core cannot run yet, with the reason (printed as SKIP). *)
+let core_skips = [ "rv32si-p-dirty", "needs Sv32 in the core (Linux L3, #6)" ]
 
 let run_test dir name =
   let tohost =
@@ -111,11 +115,18 @@ let () =
       dirs
     | dirs -> dirs
   in
+  let skipped_here =
+    if !core
+    then List.map core_skips ~f:(fun (n, why) -> n ^ ": " ^ why)
+    else []
+  in
   let names =
     List.concat_map dirs ~f:(fun dir ->
       Stdlib.Sys.readdir dir
       |> Array.to_list
       |> List.filter_map ~f:(String.chop_suffix ~suffix:".bin")
+      |> List.filter ~f:(fun n ->
+        not (!core && List.Assoc.mem core_skips ~equal:String.equal n))
       |> List.sort ~compare:String.compare
       |> List.map ~f:(fun n -> dir, n))
   in
@@ -126,6 +137,7 @@ let () =
       if Stdlib.Sys.file_exists f
       then In_channel.read_lines f |> List.filter ~f:(Fn.non String.is_empty)
       else [])
+    @ skipped_here
   in
   List.iter skipped ~f:(printf "SKIP %s\n");
   printf "riscv-tests: %d/%d passed, %d skipped\n" passed (List.length names) (List.length skipped);

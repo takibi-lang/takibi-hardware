@@ -49,6 +49,16 @@
    and the mcause in [retire_cause]. Without Zicsr all of this is constant
    and synthesis removes it.
 
+   With [~s:true] (implies Zicsr; issue #6, Linux L2) the core has user
+   and supervisor modes as Rv32_model.Machine with [~s] (same implementation
+   choices): medeleg/mideleg, the S-mode CSRs and views (sstatus, sie, sip),
+   SRET, SFENCE.VMA (a no-op until there is a TLB), mstatus MPRV/SUM/MXR/
+   TVM/TW/TSR, mcounteren/scounteren, Sstc (stimecmp against the [time]
+   input, the CLINT's mtime), SEIP from [seip] (the PLIC's S context), and
+   the PMP and trigger CSRs reading zero, and writable mcycle/minstret. Interrupts are taken in the
+   model's priority order MEI, MSI, MTI, SEI, SSI, STI, when the target
+   mode's vector is non-zero.
+
    The retire_* outputs describe each completed instruction in the same terms
    as Rv32_model.Machine.retire; they exist for lockstep testing and are
    removed by synthesis when unconnected. *)
@@ -63,6 +73,7 @@ module Trap = struct
   let illegal = 3
   let misaligned_fetch = 4
   let misaligned_access = 5
+  let page_fault = 6
 end
 
 module I = struct
@@ -71,6 +82,8 @@ module I = struct
     ; clear : 'a
     ; mem_rdata : 'a [@bits 32]
     ; irq : 'a [@bits 3] (* software, timer, external; Zicsr only *)
+    ; seip : 'a (* supervisor external interrupt (PLIC); [~s] only *)
+    ; time : 'a [@bits 64] (* CLINT mtime for time/timeh and Sstc; [~s] only *)
     }
   [@@deriving hardcaml]
 end
@@ -127,8 +140,10 @@ let create
   ?m:(ext_m = false)
   ?a:(ext_a = false)
   ?(zifencei = false)
+  ?(s = false)
   ?(reset_pc = 0)
   ~(base : Rv32_model.Isa.base) scope (i : _ I.t) =
+  let zicsr = zicsr || s in
   let reg_bits = Int.ceil_log2 (Rv32_model.Isa.num_regs base) in
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
   let sm = Always.State_machine.create (module State) spec in
@@ -189,7 +204,7 @@ let create
       rs1_value.value, rf_rdata)
   in
   let dec =
-    Decode.create ~zicsr ~m:ext_m ~a:ext_a ~zifencei ~base { Decode.I.insn = ir }
+    Decode.create ~zicsr ~m:ext_m ~a:ext_a ~zifencei ~s ~base { Decode.I.insn = ir }
     |> Decode.O.Of_signal.apply_names ~prefix:"dec_"
   in
   let%hw imm = (Imm.create { Imm.I.insn = ir }).imm in
@@ -255,11 +270,15 @@ let create
       (sll shift_value.value 1)
       (mux2 alt (sra shift_value.value 1) (srl shift_value.value 1))
   in
-  (* Machine-mode CSRs (Zicsr). Without Zicsr [handler] is constant 0, so
-     none of this logic is reachable and synthesis removes it. *)
+  (* Machine-mode CSRs (Zicsr), and the S-mode state ([~s]). Without
+     Zicsr no handler can be installed, so none of this logic is reachable
+     and synthesis removes it; without [~s] the S-mode registers are never
+     read (the [sv] values below are constants). *)
   let%hw_var mstatus_mie = Always.Variable.reg ~width:1 spec in
   let%hw_var mstatus_mpie = Always.Variable.reg ~width:1 spec in
-  let%hw_var mie = Always.Variable.reg ~width:3 spec in
+  (* mie and mip in their CSR layout (bits 1, 3, 5, 7, 9, 11). *)
+  let irq_mask = if s then 0xaaa else 0x888 in
+  let%hw_var mie = Always.Variable.reg ~width:12 spec in
   let%hw_var mtvec = Always.Variable.reg ~width:32 spec in
   let%hw_var mscratch = Always.Variable.reg ~width:32 spec in
   let%hw_var mepc = Always.Variable.reg ~width:32 spec in
@@ -267,35 +286,137 @@ let create
   let%hw_var mtval = Always.Variable.reg ~width:32 spec in
   let%hw_var mcycle = Always.Variable.reg ~width:64 spec in
   let%hw_var minstret = Always.Variable.reg ~width:64 spec in
-  let%hw handler = if zicsr then mtvec.value <>:. 0 else gnd in
-  (* mie/mip bits 3, 7, 11 are stored as bits 0, 1, 2. *)
-  let spread3 v = uresize (v.:(2) @: zero 3 @: v.:(1) @: zero 3 @: v.:(0) @: zero 3) 32 in
-  let%hw irq_pending = if zicsr then i.irq &: mie.value else zero 3 in
-  let%hw irq_due = handler &: mstatus_mie.value &: (irq_pending <>:. 0) in
-  let%hw take_irq = irq_due &: sm.is Fetch in
-  let%hw irq_code =
-    mux2
-      irq_pending.:(2)
-      (of_int ~width:4 11)
-      (mux2 irq_pending.:(0) (of_int ~width:4 3) (of_int ~width:4 7))
+  let%hw_var priv_reg =
+    Always.Variable.reg ~width:2 (Reg_spec.override spec ~clear_to:(of_int ~width:2 3))
   in
+  let%hw_var mstatus_sie = Always.Variable.reg ~width:1 spec in
+  let%hw_var mstatus_spie = Always.Variable.reg ~width:1 spec in
+  let%hw_var mstatus_spp = Always.Variable.reg ~width:1 spec in
+  let%hw_var mstatus_mpp = Always.Variable.reg ~width:2 spec in
+  let%hw_var mstatus_mprv = Always.Variable.reg ~width:1 spec in
+  let%hw_var mstatus_sum = Always.Variable.reg ~width:1 spec in
+  let%hw_var mstatus_mxr = Always.Variable.reg ~width:1 spec in
+  let%hw_var mstatus_tvm = Always.Variable.reg ~width:1 spec in
+  let%hw_var mstatus_tw = Always.Variable.reg ~width:1 spec in
+  let%hw_var mstatus_tsr = Always.Variable.reg ~width:1 spec in
+  let%hw_var mip_sw = Always.Variable.reg ~width:12 spec in
+  let%hw_var medeleg = Always.Variable.reg ~width:16 spec in
+  let%hw_var mideleg = Always.Variable.reg ~width:12 spec in
+  let%hw_var mcounteren = Always.Variable.reg ~width:3 spec in
+  let%hw_var scounteren = Always.Variable.reg ~width:3 spec in
+  let%hw_var menvcfg_stce = Always.Variable.reg ~width:1 spec in
+  let%hw_var stvec = Always.Variable.reg ~width:32 spec in
+  let%hw_var sscratch = Always.Variable.reg ~width:32 spec in
+  let%hw_var sepc = Always.Variable.reg ~width:32 spec in
+  let%hw_var scause = Always.Variable.reg ~width:32 spec in
+  let%hw_var stval = Always.Variable.reg ~width:32 spec in
+  let%hw_var satp = Always.Variable.reg ~width:32 spec in
+  let%hw_var stimecmp =
+    Always.Variable.reg ~width:64 (Reg_spec.override spec ~clear_to:(ones 64))
+  in
+  (* S-mode state as read: constants without [~s]. *)
+  let sv (v : Always.Variable.t) = if s then v.value else zero (width v.value) in
+  let%hw priv = if s then priv_reg.value else of_int ~width:2 3 in
+  let%hw tvm = sv mstatus_tvm
+  and tw = sv mstatus_tw
+  and tsr = sv mstatus_tsr
+  and sie = sv mstatus_sie
+  and stce = sv menvcfg_stce in
+  let%hw priv_m = priv ==:. 3
+  and priv_s = priv ==:. 1
+  and priv_u = priv ==:. 0 in
+  let bit_at v idx = mux idx (bits_lsb (uresize v (1 lsl width idx))) in
+  (* mip: MSIP, MTIP, MEIP (and SEIP) from the inputs, SSIP/STIP/SEIP as
+     written by software, STIP from Sstc. *)
+  let spread3 v = v.:(2) @: zero 3 @: v.:(1) @: zero 3 @: v.:(0) @: zero 3 in
+  let%hw stip_sstc = if s then stce &: (i.time >=: stimecmp.value) else gnd in
+  let%hw mip =
+    if not zicsr
+    then zero 12
+    else if not s
+    then spread3 i.irq
+    else
+      spread3 i.irq
+      |: (uresize i.seip 3 @: zero 9)
+      |: (mip_sw.value &: mux2 stce (of_int ~width:12 0x202) (of_int ~width:12 0x222))
+      |: (uresize stip_sstc 7 @: zero 5)
+  in
+  (* The interrupt to take at this boundary: pending and enabled, enabled
+     for its target mode, in the priority order MEI, MSI, MTI, SEI, SSI,
+     STI, and only when the target mode's vector is set. *)
+  let%hw pend = mip &: mie.value in
+  let%hw s_irq_en = priv_u |: (priv_s &: sie) in
+  let%hw m_irq_en = ~:priv_m |: mstatus_mie.value in
+  let irq_cands =
+    List.map [ 11; 3; 7; 9; 1; 5 ] ~f:(fun code ->
+      let deleg = if s then (sv mideleg).:(code) else gnd in
+      pend.:(code) &: mux2 deleg s_irq_en m_irq_en, code, deleg)
+  in
+  let%hw irq_valid =
+    if zicsr then List.map irq_cands ~f:(fun (c, _, _) -> c) |> reduce ~f:( |: ) else gnd
+  in
+  let irq_code, irq_deleg =
+    List.fold_right
+      irq_cands
+      ~init:(of_int ~width:5 0, gnd)
+      ~f:(fun (c, code, deleg) (code_acc, deleg_acc) ->
+        mux2 c (of_int ~width:5 code) code_acc, mux2 c deleg deleg_acc)
+  in
+  let%hw irq_code = irq_code in
+  let%hw irq_deleg = irq_deleg in
+  let%hw irq_vec = mux2 irq_deleg (sv stvec) mtvec.value in
+  let%hw irq_due = irq_valid &: (irq_vec <>:. 0) in
+  let%hw take_irq = irq_due &: sm.is Fetch in
   let csr_addr = ir.:[31, 20] in
   let%hw csr_src = mux2 dec.csr_imm (uresize ir.:[19, 15] 32) a in
   let%hw csr_writes = (funct3.:[1, 0] ==:. 1) |: (ir.:[19, 15] <>:. 0) in
   let csr_read_only = csr_addr.:[11, 10] ==:. 3 in
+  let place l =
+    List.fold l ~init:(zero 32) ~f:(fun acc (pos, x) -> acc |: sll (uresize x 32) pos)
+  in
+  let%hw mstatus_value =
+    if s
+    then
+      place
+        [ 1, mstatus_sie.value
+        ; 3, mstatus_mie.value
+        ; 5, mstatus_spie.value
+        ; 7, mstatus_mpie.value
+        ; 8, mstatus_spp.value
+        ; 11, mstatus_mpp.value
+        ; 17, mstatus_mprv.value
+        ; 18, mstatus_sum.value
+        ; 19, mstatus_mxr.value
+        ; 20, mstatus_tvm.value
+        ; 21, mstatus_tw.value
+        ; 22, mstatus_tsr.value
+        ]
+    else place [ 3, mstatus_mie.value; 7, mstatus_mpie.value ] |: of_int ~width:32 0x1800
+  in
+  let sstatus_mask = 0x000c_0122 in
+  let misa =
+    if s
+    then (
+      let ext c = 1 lsl (Char.to_int c - Char.to_int 'A') in
+      (1 lsl 30)
+      lor ext (match base with Rv32i -> 'I' | Rv32e -> 'E')
+      lor (if ext_m then ext 'M' else 0)
+      lor (if ext_a then ext 'A' else 0)
+      lor ext 'S'
+      lor ext 'U')
+    else 0
+  in
   let csrs =
     let lo v = v.:[31, 0]
     and hi v = v.:[63, 32] in
-    [ ( 0x300
-      , uresize (mstatus_mpie.value @: zero 3 @: mstatus_mie.value @: zero 3) 32
-        |: of_int ~width:32 0x1800 )
-    ; 0x304, spread3 mie.value
+    [ 0x300, mstatus_value
+    ; 0x304, uresize mie.value 32
     ; 0x305, mtvec.value
     ; 0x340, mscratch.value
     ; 0x341, mepc.value
     ; 0x342, mcause.value
     ; 0x343, mtval.value
-    ; 0x344, spread3 i.irq
+    ; 0x344, uresize mip 32
     ; 0xb00, lo mcycle.value
     ; 0xc00, lo mcycle.value
     ; 0xb80, hi mcycle.value
@@ -304,22 +425,86 @@ let create
     ; 0xc02, lo minstret.value
     ; 0xb82, hi minstret.value
     ; 0xc82, hi minstret.value
-    ; 0x301, zero 32
+    ; 0x301, of_int ~width:32 misa
     ; 0xf11, zero 32
     ; 0xf12, zero 32
     ; 0xf13, zero 32
     ; 0xf14, zero 32
     ]
+    @
+    if not s
+    then []
+    else
+      [ 0xc01, lo i.time
+      ; 0xc81, hi i.time
+      ; 0x302, uresize medeleg.value 32
+      ; 0x303, uresize mideleg.value 32
+      ; 0x306, uresize mcounteren.value 32
+      ; 0x30a, zero 32
+      ; 0x31a, uresize menvcfg_stce.value 32 |> Fn.flip sll 31
+      ; 0x100, mstatus_value &: of_int ~width:32 sstatus_mask
+      ; 0x104, uresize (mie.value &: mideleg.value) 32
+      ; 0x144, uresize (mip &: mideleg.value) 32
+      ; 0x105, stvec.value
+      ; 0x106, uresize scounteren.value 32
+      ; 0x10a, zero 32
+      ; 0x140, sscratch.value
+      ; 0x141, sepc.value
+      ; 0x142, scause.value
+      ; 0x143, stval.value
+      ; 0x180, satp.value
+      ; 0x14d, lo stimecmp.value
+      ; 0x15d, hi stimecmp.value
+      ]
   in
   let csr_hit addr = csr_addr ==:. addr in
-  let%hw csr_exists = List.map csrs ~f:(fun (addr, _) -> csr_hit addr) |> reduce ~f:( |: ) in
+  (* PMP (no entries) and debug triggers (none) read zero. *)
+  let%hw csr_zero_range =
+    if s
+    then
+      (csr_addr >=:. 0x3a0 &: (csr_addr <=:. 0x3ef))
+      |: (csr_addr >=:. 0x7a0 &: (csr_addr <=:. 0x7a5))
+    else gnd
+  in
+  let%hw csr_exists =
+    List.map csrs ~f:(fun (addr, _) -> csr_hit addr) |> reduce ~f:( |: ) |: csr_zero_range
+  in
   let%hw csr_old =
     List.map csrs ~f:(fun (addr, v) -> repeat (csr_hit addr) 32 &: v) |> reduce ~f:( |: )
   in
   let%hw csr_new =
     mux funct3.:[1, 0] [ csr_old; csr_src; csr_old |: csr_src; csr_old &: ~:csr_src ]
   in
-  let%hw csr_illegal = dec.csr &: (~:csr_exists |: (csr_writes &: csr_read_only)) in
+  (* Access below the CSR's privilege, counters not enabled below M, satp
+     with TVM and stimecmp without STCE/TM in S. *)
+  let%hw csr_denied =
+    if not s
+    then gnd
+    else (
+      let counter =
+        csr_addr.:[11, 5] ==:. (0xc00 lsr 5) |: (csr_addr.:[11, 5] ==:. (0xc80 lsr 5))
+      in
+      let cbit v = bit_at v csr_addr.:[4, 0] in
+      (csr_addr.:[9, 8] >: priv)
+      |: (counter
+          &: ~:priv_m
+          &: ~:(cbit mcounteren.value &: (priv_s |: cbit scounteren.value)))
+      |: (csr_hit 0x180 &: priv_s &: tvm)
+      |: ((csr_hit 0x14d |: csr_hit 0x15d)
+          &: priv_s
+          &: ~:(stce &: mcounteren.value.:(1))))
+  in
+  let%hw csr_illegal =
+    dec.csr &: (~:csr_exists |: csr_denied |: (csr_writes &: csr_read_only))
+  in
+  (* MRET below M, SRET in U (or S with TSR), SFENCE.VMA in U (or S with
+     TVM), WFI in U (or S with TW). *)
+  let%hw priv_illegal =
+    (dec.mret &: ~:priv_m)
+    |: (dec.sret &: (priv_u |: (priv_s &: tsr)))
+    |: (dec.sfence_vma &: (priv_u |: (priv_s &: tvm)))
+    |: (if s then dec.wfi &: (priv_u |: (priv_s &: tw)) else gnd)
+  in
   (* Outputs driven from the state machine. *)
   let%hw_var mem_read = Always.Variable.wire ~default:gnd in
   let%hw_var mem_write = Always.Variable.wire ~default:gnd in
@@ -332,7 +517,9 @@ let create
   let%hw_var overlapping = Always.Variable.wire ~default:gnd in
   let%hw overlap_ok =
     if fetch_overlap
-    then ~:(mem_op |: dec.csr |: dec.mret |: irq_due |: dec.mul |: dec.div)
+    then
+      ~:(mem_op |: dec.csr |: dec.mret |: dec.sret |: dec.sfence_vma |: irq_due |: dec.mul
+         |: dec.div)
     else gnd
   in
   (* M: the product (registered) and the divider. *)
@@ -385,42 +572,129 @@ let create
            | _ -> b)))
     else zero 32
   in
-  let enter_trap ~cause ~tval =
+  (* Trap entry, to S-mode when [deleg]. [cause] is the full mcause value. *)
+  let enter_trap ~cause ~tval ~deleg =
+    let cause_bits n = cause.:(31) @: zero (31 - n) @: cause.:[n - 1, 0] in
     Always.
       [ reservation_valid <-- gnd
       ; retire <-- vdd
       ; retire_trap <-- vdd
       ; retire_cause <-- cause
-      ; retire_next_pc <-- mtvec.value
-      ; mepc <-- pc.value
-      ; mcause <-- cause
-      ; mtval <-- tval
-      ; mstatus_mpie <-- mstatus_mie.value
-      ; mstatus_mie <-- gnd
-      ; pc <-- mtvec.value
+      ; if_
+          deleg
+          (if s
+           then
+             [ retire_next_pc <-- stvec.value
+             ; sepc <-- pc.value
+             ; scause <-- cause_bits 5
+             ; stval <-- tval
+             ; mstatus_spp <-- priv.:(0)
+             ; mstatus_spie <-- mstatus_sie.value
+             ; mstatus_sie <-- gnd
+             ; priv_reg <--. 1
+             ; pc <-- stvec.value
+             ]
+           else [])
+          ([ retire_next_pc <-- mtvec.value
+           ; mepc <-- pc.value
+           ; mcause <-- cause_bits (if s then 5 else 4)
+           ; mtval <-- tval
+           ; mstatus_mpie <-- mstatus_mie.value
+           ; mstatus_mie <-- gnd
+           ; pc <-- mtvec.value
+           ]
+           @ if s then [ mstatus_mpp <-- priv; priv_reg <--. 3 ] else [])
       ; sm.set_next Fetch
       ]
   in
-  (* A synchronous trap: enter the handler if there is one, else halt. *)
-  let halt ?(cause = 0) ?(tval = zero 32) code =
+  (* A synchronous trap with exception code [cause] (5 bits): enter the
+     handler (S-mode if delegated) if its vector is set, else halt. *)
+  let halt ~cause ?(tval = zero 32) code =
+    let deleg = if s then ~:priv_m &: bit_at (sv medeleg) cause else gnd in
+    let vec = mux2 deleg (sv stvec) mtvec.value in
     Always.
       [ if_
-          handler
-          (enter_trap ~cause:(of_int ~width:32 cause) ~tval)
+          (if zicsr then vec <>:. 0 else gnd)
+          (enter_trap ~cause:(uresize cause 32) ~tval ~deleg)
           [ trap <--. code; sm.set_next Halted ]
       ]
   in
+  let code n = of_int ~width:5 n in
   let csr_write () =
     let w addr stmts = Always.when_ (csr_hit addr) stmts in
-    Always.
-      [ w 0x300 [ mstatus_mie <-- csr_new.:(3); mstatus_mpie <-- csr_new.:(7) ]
-      ; w 0x304 [ mie <-- csr_new.:(11) @: csr_new.:(7) @: csr_new.:(3) ]
-      ; w 0x305 [ mtvec <-- csr_new.:[31, 2] @: zero 2 ]
-      ; w 0x340 [ mscratch <-- csr_new ]
-      ; w 0x341 [ mepc <-- csr_new.:[31, 2] @: zero 2 ]
-      ; w 0x342 [ mcause <-- csr_new.:(31) @: zero 27 @: csr_new.:[3, 0] ]
-      ; w 0x343 [ mtval <-- csr_new ]
+    let v = csr_new in
+    let set_mstatus ~mask =
+      let m n = mask land (1 lsl n) <> 0 in
+      let b n (r : Always.Variable.t) = if m n then [ Always.(r <-- v.:(n)) ] else [] in
+      List.concat
+        [ b 1 mstatus_sie
+        ; b 3 mstatus_mie
+        ; b 5 mstatus_spie
+        ; b 7 mstatus_mpie
+        ; b 8 mstatus_spp
+        ; (if m 11
+           then [ Always.(when_ (v.:[12, 11] <>:. 2) [ mstatus_mpp <-- v.:[12, 11] ]) ]
+           else [])
+        ; b 17 mstatus_mprv
+        ; b 18 mstatus_sum
+        ; b 19 mstatus_mxr
+        ; b 20 mstatus_tvm
+        ; b 21 mstatus_tw
+        ; b 22 mstatus_tsr
+        ]
+    in
+    let c12 n = of_int ~width:12 n in
+    Always.(
+      [ w 0x300 (set_mstatus ~mask:(if s then 0x007e_19aa else 0x88))
+      ; w 0x304 [ mie <-- (v.:[11, 0] &: c12 irq_mask) ]
+      ; w 0x305 [ mtvec <-- v.:[31, 2] @: zero 2 ]
+      ; w 0x340 [ mscratch <-- v ]
+      ; w 0x341 [ mepc <-- v.:[31, 2] @: zero 2 ]
+      ; w
+          0x342
+          [ mcause
+            <-- (if s
+                 then v.:(31) @: zero 26 @: v.:[4, 0]
+                 else v.:(31) @: zero 27 @: v.:[3, 0])
+          ]
+      ; w 0x343 [ mtval <-- v ]
       ]
+      @
+      if not s
+      then []
+      else
+        [ w 0x344 [ mip_sw <-- (v.:[11, 0] &: c12 0x222) ]
+        ; w 0x302 [ medeleg <-- (v.:[15, 0] &: of_int ~width:16 0xb3ff) ]
+        ; w 0x303 [ mideleg <-- (v.:[11, 0] &: c12 0x222) ]
+        ; w 0x306 [ mcounteren <-- v.:[2, 0] ]
+        ; w 0x31a [ menvcfg_stce <-- v.:(31) ]
+        ; w 0x100 (set_mstatus ~mask:sstatus_mask)
+        ; w
+            0x104
+            [ mie <-- (mie.value &: ~:(mideleg.value) |: (v.:[11, 0] &: mideleg.value)) ]
+        ; w
+            0x144
+            [ mip_sw
+              <-- (mip_sw.value &: c12 (lnot 2 land 0xfff)
+                   |: (v.:[11, 0] &: mideleg.value &: c12 2))
+            ]
+        ; w 0x105 [ stvec <-- v.:[31, 2] @: zero 2 ]
+        ; w 0x106 [ scounteren <-- v.:[2, 0] ]
+        ; w 0x140 [ sscratch <-- v ]
+        ; w 0x141 [ sepc <-- v.:[31, 2] @: zero 2 ]
+        ; w 0x142 [ scause <-- v.:(31) @: zero 26 @: v.:[4, 0] ]
+        ; w 0x143 [ stval <-- v ]
+        ; w 0x180 [ satp <-- (v &: of_int ~width:32 0x803f_ffff) ]
+        ; (* Counter writes (S only, as Linux-class software expects them
+             writable): the written value is what the next instruction
+             reads, so they override this cycle's increment. *)
+          w 0xb00 [ mcycle <-- mcycle.value.:[63, 32] @: v ]
+        ; w 0xb80 [ mcycle <-- v @: mcycle.value.:[31, 0] ]
+        ; w 0xb02 [ minstret <-- minstret.value.:[63, 32] @: v ]
+        ; w 0xb82 [ minstret <-- v @: minstret.value.:[31, 0] ]
+        ; w 0x14d [ stimecmp <-- stimecmp.value.:[63, 32] @: v ]
+        ; w 0x15d [ stimecmp <-- v @: stimecmp.value.:[31, 0] ]
+        ])
   in
   let complete ~result ~next =
     Always.
@@ -447,7 +721,10 @@ let create
             , [ if_
                   take_irq
                   ((retire_irq <-- vdd)
-                   :: enter_trap ~cause:(vdd @: zero 27 @: irq_code) ~tval:(zero 32))
+                   :: enter_trap
+                        ~cause:(vdd @: zero 26 @: irq_code)
+                        ~tval:(zero 32)
+                        ~deleg:irq_deleg)
                   [ mem_read <-- vdd; sm.set_next Decode ]
               ] )
           ; ( Decode
@@ -460,23 +737,23 @@ let create
                 <-- (dec.lui |: dec.auipc |: dec.jal |: dec.jalr |: dec.load |: dec.op_imm
                      |: dec.op |: dec.csr |: dec.mul |: dec.div |: atomic)
               ; if_
-                  (dec.illegal |: csr_illegal)
-                  (halt ~cause:2 ~tval:ir Trap.illegal)
+                  (dec.illegal |: csr_illegal |: priv_illegal)
+                  (halt ~cause:(code 2) ~tval:ir Trap.illegal)
                   [ if_
                       dec.ecall
-                      (halt ~cause:11 Trap.ecall)
+                      (halt ~cause:(code 8 +: uresize priv 5) Trap.ecall)
                       [ if_
                           dec.ebreak
-                          (halt ~cause:3 Trap.ebreak)
+                          (halt ~cause:(code 3) Trap.ebreak)
                           [ if_
                               (taken &: next_pc.:(1))
-                              (halt ~cause:0 ~tval:next_pc Trap.misaligned_fetch)
+                              (halt ~cause:(code 0) ~tval:next_pc Trap.misaligned_fetch)
                               [ if_
                                   (mem_op &: misaligned_mem)
                                   [ if_
                                       (dec.store |: dec.sc |: dec.amo)
-                                      (halt ~cause:6 ~tval:agu Trap.misaligned_access)
-                                      (halt ~cause:4 ~tval:agu Trap.misaligned_access)
+                                      (halt ~cause:(code 6) ~tval:agu Trap.misaligned_access)
+                                      (halt ~cause:(code 4) ~tval:agu Trap.misaligned_access)
                                   ]
                                   [ if_
                                       (dec.load |: dec.lr)
@@ -500,9 +777,30 @@ let create
                                           ; when_ dec.sc [ reservation_valid <-- gnd ]
                                           ; when_
                                               dec.mret
-                                              [ mstatus_mie <-- mstatus_mpie.value
-                                              ; mstatus_mpie <-- vdd
-                                              ]
+                                              ([ mstatus_mie <-- mstatus_mpie.value
+                                               ; mstatus_mpie <-- vdd
+                                               ]
+                                               @
+                                               if s
+                                               then
+                                                 [ priv_reg <-- mstatus_mpp.value
+                                                 ; when_
+                                                     (mstatus_mpp.value <>:. 3)
+                                                     [ mstatus_mprv <-- gnd ]
+                                                 ; mstatus_mpp <--. 0
+                                                 ]
+                                               else [])
+                                          ; when_
+                                              dec.sret
+                                              (if s
+                                               then
+                                                 [ priv_reg <-- gnd @: mstatus_spp.value
+                                                 ; mstatus_sie <-- mstatus_spie.value
+                                                 ; mstatus_spie <-- vdd
+                                                 ; mstatus_spp <-- gnd
+                                                 ; mstatus_mprv <-- gnd
+                                                 ]
+                                               else [])
                                           ; when_ (dec.csr &: csr_writes) (csr_write ())
                                           ; proc
                                               (complete
@@ -511,7 +809,11 @@ let create
                                                       dec.csr
                                                       csr_old
                                                       (mux2 dec.sc (uresize ~:sc_ok 32) exec_result))
-                                                 ~next:(mux2 dec.mret mepc.value next_pc))
+                                                 ~next:
+                                                   (mux2
+                                                      dec.mret
+                                                      mepc.value
+                                                      (mux2 dec.sret (sv sepc) next_pc)))
                                           ; when_
                                               overlap_ok
                                               [ mem_read <-- vdd
@@ -628,10 +930,10 @@ let create
   }
 ;;
 
-let hierarchical ?zicsr ?dual_read ?fetch_overlap ?m ?a ?zifencei ?reset_pc ~base scope =
+let hierarchical ?zicsr ?dual_read ?fetch_overlap ?m ?a ?zifencei ?s ?reset_pc ~base scope =
   let module H = Hierarchy.In_scope (I) (O) in
   H.hierarchical
     ~scope
     ~name:"rv32_core"
-    (create ?zicsr ?dual_read ?fetch_overlap ?m ?a ?zifencei ?reset_pc ~base)
+    (create ?zicsr ?dual_read ?fetch_overlap ?m ?a ?zifencei ?s ?reset_pc ~base)
 ;;
