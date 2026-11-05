@@ -1,0 +1,6 @@
+(library
+ (name ecp5_test)
+ (inline_tests)
+ (libraries ecp5 hardcaml)
+ (preprocess
+  (pps ppx_jane ppx_expect)))

@@ -73,17 +73,53 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | Found at | Count |
 |----------|-------|
 | S0 | 1 |
-| S1 | 21 |
+| S1 | 22 |
 | S2 | 2 (board-sim) |
 | S3 | 8 |
-| S4 | 2 |
+| S4 | 3 |
 
-By class: testbench 18, toolchain 4, model 1, inference 1, resource 1,
-reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 1 more (B-0043), reset/init 1 more (B-0035), logic 2 more (B-0039, B-0041).
+By class: testbench 19, toolchain 4, model 1, inference 1, resource 1,
+reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 1 more (B-0043), reset/init 1 more (B-0035), logic 2 more (B-0039, B-0041), io/pinout 1 (B-0044).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0045: JTAG test model presented TDI one cycle early
+
+- Date: 2026-11-05
+- Project: ip/ecp5/test/test_jtag_reg.ml (#10)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: the register received the written value shifted right by one.
+- Cause: the model of JTAGG showed TDI bit k in Shift-DR period k; the
+  TAP samples it at the edge that ends period k, so JTDI shows it in
+  period k + 1 (and a stale bit in the first period).
+- Fix: the model presents bit k one period later (a stale 1 first).
+- Regression: the test itself.
+
+### B-0044: ER1 register read back corrupted words through JTAGG
+
+- Date: 2026-11-05
+- Project: ip/ecp5 (Jtag_reg), designs/jtag_i9 (#10)
+- Found at: S4 (OpenOCD drscan on the board: 0x127e0261 instead of
+  0xcafe5679); Catchable at: S1, with a model of JTAGG's timing
+- Class: io/pinout (the interface timing of a hard primitive)
+- Symptom: the low half (the written value) mostly right, the captured
+  constant corrupted; moving TDO to a falling-edge register made it worse.
+- Cause: JTAGG's undocumented timing: JTDI is TDI registered on the rising
+  edge (one cycle late, stale in the first shift cycle, the last bit in
+  Exit1-DR) and JTDO1 is sampled on the falling edge. The first design
+  shifted on the rising edge with JTDI as if it were TDI. No simulation
+  stage could see this: the primitive has no model in the repository and
+  its behaviour is not in Lattice's documentation (LiteX and Hazard3 encode
+  it after Tom Verbeure's measurements).
+- Fix: run the register on the falling edge, drive JTDO1 from the next
+  state, skip the stale first JTDI and take the last bit in Exit1-DR (as
+  LiteX's ECP5 JTAG PHY).
+- Regression: test_jtag_reg.ml drives the register through a model of
+  JTAGG with this timing (S1); `make -C designs/jtag_i9 jtag-test` on
+  the board.
 
 ### B-0043: the first SoC build ran at 34 MHz (target 50)
 

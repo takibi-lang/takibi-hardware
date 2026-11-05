@@ -44,6 +44,15 @@ done, what was learned, and the numbers measured that day.
   boots on the board to the REPL** and answers help/echo/uptime/bench:
   `bench syscall 1000` 73 ms (73 us per call), `bench memcpy 64` 64 ms,
   without caches. No defect was found first on the board.
+- JTAG (#10): `openFPGALoader --detect` and OpenOCD reach the ECP5 TAP
+  through the DAPLink (IDCODE 0x41112043). OpenOCD needs
+  LD_PRELOAD=libhidapi-libusb (no /dev/hidraw in the devcontainer).
+  designs/jtag_i9: a 32-bit register behind JTAGG's ER1 (IR 0x32), read
+  and written with irscan/drscan at 1 MHz. The first version read
+  corrupted words: JTAGG registers TDI and samples TDO on the falling
+  edge (B-0044, the first defect found on the i9); fixed as LiteX does.
+- REPL (#24): cycles from rdtime (Linux allows only time in U-mode),
+  bench sleep for the timer wake-up latency.
 - Testing: most defects of the day were found at S1 (models, lockstep,
   riscv-tests); S3 found the Fmax and naming problems; Verilog generation
   found a port named `time` (B-0031, now an S1 test).
