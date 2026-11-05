@@ -5,8 +5,11 @@
    retires is checked in lockstep with the golden model, which sees the
    boot ROM and the flash image and takes the device loads from the core.
 
-   Inputs are typed when the UART output ends with [prompt] (or at once
-   without a prompt), one byte at a time. *)
+   Input is typed line by line: when the UART output ends with [prompt]
+   (or at once without a prompt), the next line up to and including its
+   '\r' is typed, one byte every [key_interval] cycles (the simulated line
+   runs at 5 Mbaud; typing at that rate overruns the 16-byte receive FIFO
+   while the kernel is busy, which a person at 115200 baud never does). *)
 open! Base
 open! Hardcaml
 module Top = Soc.Soc_top
@@ -74,6 +77,7 @@ let words_of_string s =
 
 let run
   ?(input = "")
+  ?(key_interval = 20_000)
   ?prompt
   ?(until = fun (_ : string) -> false)
   ?(max_cycles = 1_000_000)
@@ -127,6 +131,8 @@ let run
   in
   ls.model.pc <- 0;
   let pending_input = ref (String.to_list input) in
+  let typing = ref false (* inside a line, after its prompt *)
+  and next_key = ref 0 in
   let irq_fetch = ref 0
   and time_fetch = ref 0 in
   i.clear := Bits.vdd;
@@ -164,12 +170,16 @@ let run
               ~sck:(Bits.to_bool !(pins.flash_sck))
               ~mosi:(Bits.to_bool !(pins.flash_mosi)));
       (match !pending_input with
-       | c :: rest
-         when Uart_bench.Uart_line.idle line
-              && Option.value_map prompt ~default:true ~f:(fun p -> String.is_suffix out ~suffix:p)
-         ->
-         Uart_bench.Uart_line.send line (String.of_char c);
-         pending_input := rest
+       | c :: rest when cycle >= !next_key && Uart_bench.Uart_line.idle line ->
+         if (not !typing)
+            && Option.value_map prompt ~default:true ~f:(fun p -> String.is_suffix out ~suffix:p)
+         then typing := true;
+         if !typing
+         then (
+           Uart_bench.Uart_line.send line (String.of_char c);
+           pending_input := rest;
+           next_key := cycle + key_interval;
+           if Char.equal c '\r' then typing := false)
        | _ -> ());
       i.uart_rx := Bits.of_bool (Uart_bench.Uart_line.next line);
       Cyclesim.cycle_check sim;
