@@ -1,7 +1,9 @@
 (* Lockstep checking: every instruction the core retires is compared with
    the golden model executing the same instruction.
 
-   Memory-mapped I/O loads cannot be predicted by the model (a UART status
+   [io_image] gives the model the contents of read-only I/O regions it can
+   know (a boot ROM, a flash image), so it can also fetch from them.
+   Other memory-mapped I/O loads cannot be predicted by the model (a UART status
    register depends on timing), so the model's I/O loads return whatever
    the core loaded; everything else must match exactly.
 
@@ -50,6 +52,7 @@ let create
   ?(m = false)
   ?(a = false)
   ?(s = false)
+  ?(io_image = fun ~addr:(_ : int) ~bytes:(_ : int) -> (None : int option))
   ?(mem_base = 0)
   ~base
   ~mem_bytes
@@ -62,7 +65,11 @@ let create
           Machine.create
             ~io:
               { is_io
-              ; load = (fun ~addr:_ ~bytes -> (force t).io_load_value land ((1 lsl (8 * bytes)) - 1))
+              ; load =
+                  (fun ~addr ~bytes ->
+                    match io_image ~addr ~bytes with
+                    | Some v -> v
+                    | None -> (force t).io_load_value land ((1 lsl (8 * bytes)) - 1))
               ; store = (fun ~addr:_ ~bytes:_ ~value:_ -> ())
               }
             ~zicsr

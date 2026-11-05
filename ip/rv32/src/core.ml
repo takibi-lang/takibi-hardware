@@ -1152,10 +1152,10 @@ let create
   }
 ;;
 
-let hierarchical ?zicsr ?dual_read ?fetch_overlap ?m ?a ?zifencei ?s ?reset_pc ~base scope =
+let hierarchical ?zicsr ?dual_read ?fetch_overlap ?m ?a ?zifencei ?s ?tlb_entries ?reset_pc ~base scope =
   let module H = Hierarchy.In_scope (I) (O) in
   H.hierarchical
     ~scope
     ~name:"rv32_core"
-    (create ?zicsr ?dual_read ?fetch_overlap ?m ?a ?zifencei ?s ?reset_pc ~base)
+    (create ?zicsr ?dual_read ?fetch_overlap ?m ?a ?zifencei ?s ?tlb_entries ?reset_pc ~base)
 ;;

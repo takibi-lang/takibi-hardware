@@ -61,7 +61,8 @@ let run ?(corrupt_sample = false) ~seed ~reads () =
      | _ -> addr := !addr + 4);
     if !addr + 4 > String.length image then addr := 0;
     i.read := Bits.vdd;
-    i.addr := Bits.of_int ~width:23 !addr;
+    (* a byte or halfword address inside the word reads the whole word *)
+    i.addr := Bits.of_int ~width:23 (!addr + Random.State.int rng 4);
     until (fun () -> Bits.to_bool !(o.ready));
     i.read := Bits.gnd;
     let data = ref 0 in

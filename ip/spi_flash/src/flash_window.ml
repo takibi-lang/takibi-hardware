@@ -74,15 +74,17 @@ let create scope (i : _ I.t) =
   let streaming = reg "streaming" 1 in
   let next_addr = reg "next_addr" 23 in
   let rdata = reg "rdata" 32 in
-  let continue = (streaming.value &: (i.addr ==: next_addr.value)) -- "continue" in
+  (* the word holding the addressed byte (the core extracts its lane) *)
+  let word_addr = (i.addr.:[22, 2] @: zero 2) -- "word_addr" in
+  let continue = (streaming.value &: (word_addr ==: next_addr.value)) -- "continue" in
   let bswap x = concat_lsb [ x.:[31, 24]; x.:[23, 16]; x.:[15, 8]; x.:[7, 0] ] in
   let start_command =
     Always.
       [ cs_n <-- gnd
       ; sck <-- gnd
-      ; shift_out <-- of_int ~width:8 0x03 @: (gnd @: i.addr)
+      ; shift_out <-- of_int ~width:8 0x03 @: (gnd @: word_addr)
       ; bits <--. 32
-      ; next_addr <-- i.addr
+      ; next_addr <-- word_addr
       ; sm.set_next Command
       ]
   in

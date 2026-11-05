@@ -73,17 +73,47 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | Found at | Count |
 |----------|-------|
 | S0 | 1 |
-| S1 | 18 |
+| S1 | 20 |
 | S2 | 2 (board-sim) |
 | S3 | 6 |
 | S4 | 2 |
 
-By class: testbench 17, toolchain 4, model 1, inference 1, resource 1,
-reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 1 (B-0031), reset/init 1 more (B-0035).
+By class: testbench 18, toolchain 4, model 1, inference 1, resource 1,
+reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 1 (B-0031), reset/init 1 more (B-0035), logic 1 more (B-0039).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0040: SoC test handler branched one instruction short
+
+- Date: 2026-11-05
+- Project: ip/soc/test/test_soc.ml (#21)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: 14409 external interrupts and no echo (lockstep: no mismatch,
+  the model did the same).
+- Cause: the handler's `bne` skipped the 7-word timer path with offset
+  28; a branch offset counts from the branch itself, so it landed on the
+  timer path's MRET and the UART interrupt was never claimed.
+- Fix: offset 32.
+- Regression: the test's expected output (the echo).
+
+### B-0039: flash window sent byte addresses to the flash
+
+- Date: 2026-11-05
+- Project: ip/spi_flash (#27)
+- Found at: S1 (the SoC test in lockstep: `lbu` from the flash window
+  returned the byte one word later); Catchable at: S1
+- Class: logic
+- Symptom: an LBU at flash offset 0x101 loaded the byte at 0x105.
+- Cause: the window used the full byte address for READ and for the
+  streaming comparison. The core puts a byte in its lane of the word, so
+  the window must return the aligned word; the window's own test only used
+  word addresses.
+- Fix: the window uses the word address.
+- Regression: test_flash.ml reads at random byte offsets inside the word;
+  test_soc.ml.
 
 ### B-0038: UART test read IIR before sampling irq (argument evaluation order)
 
