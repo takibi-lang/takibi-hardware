@@ -16,18 +16,27 @@ open! Base
 let u32 v = v land 0xffff_ffff
 
 module Clint = struct
-  (* 64-bit registers as 32-bit halves (OCaml ints are 63 bits). *)
+  (* 64-bit registers as 32-bit halves (OCaml ints are 63 bits). One msip
+     and mtimecmp per hart (SiFive layout: msip at 4 * hart, mtimecmp at
+     0x4000 + 8 * hart; #9). *)
   type t =
-    { mutable msip : bool
-    ; mutable cmp_lo : int
-    ; mutable cmp_hi : int
+    { msip : bool array
+    ; cmp_lo : int array
+    ; cmp_hi : int array
     ; mutable time_lo : int
     ; mutable time_hi : int
     }
 
-  let create () =
-    { msip = false; cmp_lo = 0xffff_ffff; cmp_hi = 0xffff_ffff; time_lo = 0; time_hi = 0 }
+  let create ?(harts = 1) () =
+    { msip = Array.create ~len:harts false
+    ; cmp_lo = Array.create ~len:harts 0xffff_ffff
+    ; cmp_hi = Array.create ~len:harts 0xffff_ffff
+    ; time_lo = 0
+    ; time_hi = 0
+    }
   ;;
+
+  let harts t = Array.length t.msip
 
   let tick t n =
     let lo = t.time_lo + n in
@@ -35,27 +44,41 @@ module Clint = struct
     t.time_hi <- u32 (t.time_hi + (lo lsr 32))
   ;;
 
-  let mtip t = t.time_hi > t.cmp_hi || (t.time_hi = t.cmp_hi && t.time_lo >= t.cmp_lo)
+  let mtip ?(hart = 0) t =
+    t.time_hi > t.cmp_hi.(hart) || (t.time_hi = t.cmp_hi.(hart) && t.time_lo >= t.cmp_lo.(hart))
+  ;;
+
+  let msip ?(hart = 0) t = t.msip.(hart)
 
   let load t off =
-    match off with
-    | 0x0 -> Bool.to_int t.msip
-    | 0x4000 -> t.cmp_lo
-    | 0x4004 -> t.cmp_hi
-    | 0xbff8 -> t.time_lo
-    | 0xbffc -> t.time_hi
-    | _ -> 0
+    let h = harts t in
+    if off < 4 * h && off % 4 = 0
+    then Bool.to_int t.msip.(off / 4)
+    else if off >= 0x4000 && off < 0x4000 + (8 * h)
+    then (
+      let k = (off - 0x4000) / 8 in
+      if (off - 0x4000) % 8 = 0 then t.cmp_lo.(k) else t.cmp_hi.(k))
+    else (
+      match off with
+      | 0xbff8 -> t.time_lo
+      | 0xbffc -> t.time_hi
+      | _ -> 0)
   ;;
 
   let store t off v =
     let v = u32 v in
-    match off with
-    | 0x0 -> t.msip <- v land 1 <> 0
-    | 0x4000 -> t.cmp_lo <- v
-    | 0x4004 -> t.cmp_hi <- v
-    | 0xbff8 -> t.time_lo <- v
-    | 0xbffc -> t.time_hi <- v
-    | _ -> ()
+    let h = harts t in
+    if off < 4 * h && off % 4 = 0
+    then t.msip.(off / 4) <- v land 1 <> 0
+    else if off >= 0x4000 && off < 0x4000 + (8 * h)
+    then (
+      let k = (off - 0x4000) / 8 in
+      if (off - 0x4000) % 8 = 0 then t.cmp_lo.(k) <- v else t.cmp_hi.(k) <- v)
+    else (
+      match off with
+      | 0xbff8 -> t.time_lo <- v
+      | 0xbffc -> t.time_hi <- v
+      | _ -> ())
   ;;
 end
 

@@ -11,7 +11,9 @@ open! Base
 module M = Rv32_model.Machine
 
 type t =
-  { machine : M.t
+  { machine : M.t (* hart 0 *)
+  ; machines : M.t array (* every hart, sharing the RAM (#9) *)
+  ; mutable next : int (* the hart that steps next (round robin) *)
   ; clint : Devices.Clint.t
   ; plic : Devices.Plic.t
   ; uart : Devices.Uart.t
@@ -30,10 +32,10 @@ let read_image s off bytes =
   List.fold (List.range 0 bytes) ~init:0 ~f:(fun acc k -> acc lor (byte_of s (off + k) lsl (8 * k)))
 ;;
 
-let create ?(instructions_per_tick = 50) ~boot_rom ~flash () =
-  let clint = Devices.Clint.create () in
+let create ?(instructions_per_tick = 50) ?(harts = 1) ~boot_rom ~flash () =
+  let clint = Devices.Clint.create ~harts () in
   let plic =
-    Devices.Plic.create ~sources:Soc_map.plic_sources ~contexts:2
+    Devices.Plic.create ~sources:Soc_map.plic_sources ~contexts:(2 * harts)
   in
   let uart = Devices.Uart.create () in
   let open Soc_map in
@@ -70,37 +72,50 @@ let create ?(instructions_per_tick = 50) ~boot_rom ~flash () =
           | Some `Rom | Some `Flash | None -> ())
     }
   in
+  let make ~hartid ~mem csr_input =
+    M.create
+      ~io
+      ~s:true
+      ~m:true
+      ~a:true
+      ~zifencei:true
+      ~mem_base:ram_base
+      ~csr_input
+      ~hartid
+      ?mem
+      ~base:Rv32i
+      ~mem_bytes:ram_bytes
+      ()
+  in
   let rec t =
     lazy
-      { machine =
-          M.create
-            ~io
-            ~s:true
-            ~m:true
-            ~a:true
-            ~zifencei:true
-            ~mem_base:ram_base
-            ~csr_input:(fun csr -> csr_input (Lazy.force t) csr)
-            ~base:Rv32i
-            ~mem_bytes:ram_bytes
-            ()
-      ; clint
-      ; plic
-      ; uart
-      ; boot_rom
-      ; flash
-      ; instructions_per_tick
-      ; retired = 0
-      ; interrupts = 0
-      }
-  and csr_input t csr =
+      (let m0 = make ~hartid:0 ~mem:None (fun csr -> csr_input (Lazy.force t) 0 csr) in
+       let machines =
+         Array.init harts ~f:(fun h ->
+           if h = 0
+           then m0
+           else make ~hartid:h ~mem:(Some m0.mem) (fun csr -> csr_input (Lazy.force t) h csr))
+       in
+       { machine = m0
+       ; machines
+       ; next = 0
+       ; clint
+       ; plic
+       ; uart
+       ; boot_rom
+       ; flash
+       ; instructions_per_tick
+       ; retired = 0
+       ; interrupts = 0
+       })
+  and csr_input t h csr =
     let open Devices in
     match csr with
     | 0x344 ->
-      (if t.clint.msip then 1 lsl 3 else 0)
-      lor (if Clint.mtip t.clint then 1 lsl 7 else 0)
-      lor (if Plic.irq t.plic ~context:Soc_map.plic_context_s then 1 lsl 9 else 0)
-      lor if Plic.irq t.plic ~context:Soc_map.plic_context_m then 1 lsl 11 else 0
+      (if Clint.msip ~hart:h t.clint then 1 lsl 3 else 0)
+      lor (if Clint.mtip ~hart:h t.clint then 1 lsl 7 else 0)
+      lor (if Plic.irq t.plic ~context:((2 * h) + Soc_map.plic_context_s) then 1 lsl 9 else 0)
+      lor if Plic.irq t.plic ~context:((2 * h) + Soc_map.plic_context_m) then 1 lsl 11 else 0
     | 0xc01 -> t.clint.time_lo
     | 0xc81 -> t.clint.time_hi
     | 0xb00 | 0xc00 -> t.retired land 0xffff_ffff
@@ -110,25 +125,33 @@ let create ?(instructions_per_tick = 50) ~boot_rom ~flash () =
     | _ -> 0
   in
   let t = Lazy.force t in
-  t.machine.pc <- Soc_map.boot_rom_base;
+  Array.iter t.machines ~f:(fun m -> m.pc <- Soc_map.boot_rom_base);
   t
 ;;
 
 let receive t s = String.iter s ~f:(Devices.Uart.receive t.uart)
 let output t = Buffer.contents t.uart.output
 
-(* One instruction or interrupt entry. *)
+(* One instruction or interrupt entry of the next hart (round robin). A
+   store invalidates the other harts' LR/SC reservations on its word. *)
 let step t =
   Devices.Plic.set_level t.plic ~source:Soc_map.uart_irq (Devices.Uart.irq t.uart);
+  let h = t.next in
+  let m = t.machines.(h) in
+  t.next <- (h + 1) % Array.length t.machines;
   let r =
-    match M.pending_interrupt t.machine with
+    match M.pending_interrupt m with
     | Some code ->
       t.interrupts <- t.interrupts + 1;
-      (match M.interrupt t.machine ~code with
+      (match M.interrupt m ~code with
        | Ok r -> Ok r
        | Error msg -> failwith ("Soc.step: " ^ msg))
-    | None -> M.step t.machine
+    | None -> M.step m
   in
+  (match r with
+   | Ok { mem_write = Some (addr, _, _); _ } ->
+     Array.iteri t.machines ~f:(fun k o -> if k <> h then M.invalidate_reservation o ~addr)
+   | _ -> ());
   t.retired <- t.retired + 1;
   if t.retired % t.instructions_per_tick = 0 then Devices.Clint.tick t.clint 1;
   r

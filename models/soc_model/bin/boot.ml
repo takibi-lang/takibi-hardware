@@ -16,9 +16,13 @@ module Map = Soc_model.Soc_map
 let () =
   let args = Sys.get_argv () |> Array.to_list |> List.tl_exn in
   let max = ref 2_000_000_000
+  and harts = ref 1
   and input = ref ""
   and until = ref None in
   let rec parse = function
+    | "--harts" :: n :: rest ->
+      harts := Int.of_string n;
+      parse rest
     | "--max" :: n :: rest ->
       max := Int.of_string n;
       parse rest
@@ -43,7 +47,7 @@ let () =
   let put off s = Bytes.From_string.blit ~src:s ~src_pos:0 ~dst:flash ~dst_pos:off ~len:(String.length s) in
   put Map.flash_dtb_offset (read dtb);
   put Map.flash_kernel_offset (read image);
-  let soc = Soc.create ~boot_rom:(read boot) ~flash:(Bytes.to_string flash) () in
+  let soc = Soc.create ~harts:!harts ~boot_rom:(read boot) ~flash:(Bytes.to_string flash) () in
   let printed = ref 0 in
   let pending = ref (String.to_list !input) in
   let next_key = ref 0 in

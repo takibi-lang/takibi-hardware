@@ -25,7 +25,7 @@
      [csr_input]; the model does not store them, so a write to a machine
      counter only affects what [csr_input] returns (the core's counters in
      lockstep; writable with [s] there). Standalone runs read zero.
-   - misa, mvendorid, marchid, mimpid, mhartid read as 0 (misa reports the
+   - misa, mvendorid, marchid, mimpid read as 0, mhartid as [hartid] (misa reports the
      extensions with [s]). Other CSRs are illegal, as are writes to
      read-only CSRs (address bits 11..10 = 3) and accesses from a lower
      privilege than the address requires (bits 9..8).
@@ -156,6 +156,7 @@ type t =
   ; mutable stval : int
   ; mutable satp : int
   ; mutable stimecmp : int * int (* lo, hi *)
+  ; hartid : int
   }
 
 let mask32 v = v land 0xffff_ffff
@@ -170,10 +171,13 @@ let create
   ?(s = false)
   ?(mem_base = 0)
   ?(csr_input = fun _ -> 0)
+  ?(hartid = 0)
+  ?mem
   ~base
   ~mem_bytes
   ()
   =
+  (* [mem]: share another hart's RAM (#9) *)
   { base
   ; zicsr = zicsr || s
   ; m
@@ -184,7 +188,7 @@ let create
   ; reservation = None
   ; regs = Array.make (Isa.num_regs base) 0
   ; pc = mem_base
-  ; mem = Bytes.make mem_bytes '\000'
+  ; mem = (match mem with Some m -> m | None -> Bytes.make mem_bytes '\000')
   ; io
   ; csr_input
   ; priv = 3
@@ -219,7 +223,18 @@ let create
   ; stval = 0
   ; satp = 0
   ; stimecmp = 0xffff_ffff, 0xffff_ffff
+  ; hartid
   }
+;;
+
+(* Another hart's store to [addr] (physical, as the store's virtual
+   address is what the reservation holds only when translation is off;
+   the SoC model compares physical words): an LR/SC reservation on the
+   same word is lost (#9). *)
+let invalidate_reservation t ~addr =
+  match t.reservation with
+  | Some r when r land lnot 3 = addr land lnot 3 -> t.reservation <- None
+  | _ -> ()
 ;;
 
 (* Interrupt bits: SSI 1, MSI 3, STI 5, MTI 7, SEI 9, MEI 11. *)
@@ -330,7 +345,8 @@ let csr_read t csr =
     | 0xb00 | 0xb02 | 0xb80 | 0xb82 | 0xc00 | 0xc02 | 0xc80 | 0xc82 ->
       Some (mask32 (t.csr_input csr))
     | 0x301 -> Some (misa t)
-    | 0xf11 | 0xf12 | 0xf13 | 0xf14 -> Some 0
+    | 0xf11 | 0xf12 | 0xf13 -> Some 0
+    | 0xf14 -> Some t.hartid
     | _ when not t.s -> None
     | 0xc01 | 0xc81 -> Some (lo_hi_time csr)
     | 0x302 -> Some t.medeleg

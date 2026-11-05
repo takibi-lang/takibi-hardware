@@ -18,3 +18,4 @@
     -nostartfiles -mno-relax -Wl,--no-warn-rwx-segments -I. -T link.ld -o boot.elf
     boot.S)
    (run riscv-none-elf-objcopy -O binary boot.elf boot.bin))))
+

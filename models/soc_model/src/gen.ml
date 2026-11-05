@@ -6,10 +6,40 @@ open Soc_map
 
 let hex = Printf.sprintf "0x%x"
 
-let dts () =
+(* Memory reserved by the boot ROM (#9): its M-mode mailboxes (IPIs,
+   remote fences, saved registers), at the top of the RAM. *)
+let mailbox_bytes = 0x1000
+let mailbox_base = ram_base + ram_bytes - mailbox_bytes
+
+let cpu h =
+  [ ""
+  ; Printf.sprintf "    cpu%d: cpu@%d {" h h
+  ; "      device_type = \"cpu\";"
+  ; Printf.sprintf "      reg = <%d>;" h
+  ; "      compatible = \"riscv\";"
+  ; "      status = \"okay\";"
+  ; "      mmu-type = \"riscv,sv32\";"
+  ; Printf.sprintf
+      "      riscv,isa = \"%s\";"
+      (String.concat ~sep:"_" ("rv32ima" :: List.drop isa_extensions 3))
+  ; "      riscv,isa-base = \"rv32i\";"
+  ; Printf.sprintf
+      "      riscv,isa-extensions = %s;"
+      (String.concat ~sep:", " (List.map isa_extensions ~f:(Printf.sprintf "\"%s\"")))
+  ; ""
+  ; Printf.sprintf "      cpu%d_intc: interrupt-controller {" h
+  ; "        #interrupt-cells = <1>;"
+  ; "        interrupt-controller;"
+  ; "        compatible = \"riscv,cpu-intc\";"
+  ; "      };"
+  ; "    };"
+  ]
+;;
+
+let dts ?(harts = 1) () =
   String.concat
     ~sep:"\n"
-    [ "/* Generated from models/soc_model/src/soc_map.ml; do not edit. */"
+    ([ "/* Generated from models/soc_model/src/soc_map.ml; do not edit. */"
     ; "/dts-v1/;"
     ; ""
     ; "/ {"
@@ -31,29 +61,16 @@ let dts () =
     ; "    #size-cells = <0>;"
     ; Printf.sprintf "    timebase-frequency = <%d>;" timebase_hz
     ; ""
-    ; "    cpu0: cpu@0 {"
-    ; "      device_type = \"cpu\";"
-    ; "      reg = <0>;"
-    ; "      compatible = \"riscv\";"
-    ; "      status = \"okay\";"
-    ; "      mmu-type = \"riscv,sv32\";"
-    ; Printf.sprintf "      riscv,isa = \"%s\";" (String.concat ~sep:"_" ("rv32ima" :: List.drop isa_extensions 3))
-    ; "      riscv,isa-base = \"rv32i\";"
-    ; Printf.sprintf
-        "      riscv,isa-extensions = %s;"
-        (String.concat ~sep:", " (List.map isa_extensions ~f:(Printf.sprintf "\"%s\"")))
-    ; ""
-    ; "      cpu0_intc: interrupt-controller {"
-    ; "        #interrupt-cells = <1>;"
-    ; "        interrupt-controller;"
-    ; "        compatible = \"riscv,cpu-intc\";"
-    ; "      };"
-    ; "    };"
-    ; "  };"
+    ]
+    @ List.concat_map (List.range 0 harts) ~f:cpu
+    @ [ "  };"
     ; ""
     ; Printf.sprintf "  memory@%x {" ram_base
     ; "    device_type = \"memory\";"
-    ; Printf.sprintf "    reg = <%s %s>;" (hex ram_base) (hex ram_bytes)
+    ; Printf.sprintf
+        "    reg = <%s %s>;"
+        (hex ram_base)
+        (hex (ram_bytes - mailbox_bytes))
     ; "  };"
     ; ""
     ; "  soc {"
@@ -68,8 +85,12 @@ let dts () =
     ; "      #address-cells = <0>;"
     ; "      #interrupt-cells = <1>;"
     ; "      interrupt-controller;"
-    ; "      /* context 0: M external (11), context 1: S external (9) */"
-    ; "      interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;"
+    ; "      /* contexts 2h: M external (11), 2h + 1: S external (9) of hart h */"
+    ; Printf.sprintf
+        "      interrupts-extended = %s;"
+        (String.concat
+           ~sep:", "
+           (List.init harts ~f:(fun h -> Printf.sprintf "<&cpu%d_intc 11>, <&cpu%d_intc 9>" h h)))
     ; Printf.sprintf "      riscv,ndev = <%d>;" plic_sources
     ; "    };"
     ; ""
@@ -86,10 +107,10 @@ let dts () =
     ; "  };"
     ; "};"
     ; ""
-    ]
+    ])
 ;;
 
-let header () =
+let header ?(harts = 1) () =
   let defs =
     [ "BOOT_ROM_BASE", boot_rom_base
     ; "CLINT_BASE", clint_base
@@ -102,6 +123,8 @@ let header () =
     ; "FLASH_KERNEL_OFFSET", flash_kernel_offset
     ; "KERNEL_LOAD", kernel_load
     ; "TIMEBASE_HZ", timebase_hz
+    ; "HARTS", harts
+    ; "MAILBOX", mailbox_base
     ]
   in
   String.concat
