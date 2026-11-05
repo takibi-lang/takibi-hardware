@@ -1,0 +1,5 @@
+(library
+ (name sdram_bench)
+ (libraries sdram hardcaml)
+ (preprocess
+  (pps ppx_jane)))

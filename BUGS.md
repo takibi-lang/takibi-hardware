@@ -73,17 +73,31 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | Found at | Count |
 |----------|-------|
 | S0 | 1 |
-| S1 | 14 |
+| S1 | 15 |
 | S2 | 2 (board-sim) |
 | S3 | 6 |
 | S4 | 2 |
 
 By class: testbench 14, toolchain 4, model 1, inference 1, resource 1,
-reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 1 (B-0031).
+reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 1 (B-0031), reset/init 1 more (B-0035).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0035: SDRAM command register reset to MODE REGISTER SET
+
+- Date: 2026-11-05
+- Project: ip/sdram (controller, #7)
+- Found at: S1 (the SDRAM model: "command 0 during the 200 us power-up",
+  "MODE REGISTER SET after 0 refreshes"); Catchable at: S1
+- Class: reset/init
+- Symptom: the model saw MRS on every cycle of the power-up wait.
+- Cause: the registered RAS#/CAS#/WE# pins reset to 000, which is MODE
+  REGISTER SET, and the controller only writes NOP from the first cycle
+  after reset.
+- Fix: the command register resets to NOP (111).
+- Regression: test_sdram.ml (the model checks the power-up sequence).
 
 ### B-0034: Sv32 random test: the M handler clobbered the interrupted S handler
 
