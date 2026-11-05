@@ -1,0 +1,5 @@
+(library
+ (name spi_flash_bench)
+ (libraries spi_flash hardcaml)
+ (preprocess
+  (pps ppx_jane)))

@@ -1,0 +1,6 @@
+(library
+ (name spi_flash_test)
+ (inline_tests)
+ (libraries spi_flash spi_flash_bench hardcaml)
+ (preprocess
+  (pps ppx_jane ppx_expect)))

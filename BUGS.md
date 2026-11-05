@@ -73,17 +73,46 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | Found at | Count |
 |----------|-------|
 | S0 | 1 |
-| S1 | 15 |
+| S1 | 17 |
 | S2 | 2 (board-sim) |
 | S3 | 6 |
 | S4 | 2 |
 
-By class: testbench 14, toolchain 4, model 1, inference 1, resource 1,
+By class: testbench 16, toolchain 4, model 1, inference 1, resource 1,
 reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 1 (B-0031), reset/init 1 more (B-0035).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0037: flash test fed the model the previous cycle's pins
+
+- Date: 2026-11-05
+- Project: ip/spi_flash/test/test_flash.ml (#27)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: every word read back with each byte shifted by one bit.
+- Cause: after switching the outputs to clock_edge:Before (B-0036) the
+  model also read SCK/MOSI/CS# from them, i.e. from the cycle before; the
+  model ran one cycle behind the controller.
+- Fix: registered pins are read after the edge, the combinational
+  handshake before it.
+- Regression: the test itself; its negative case (MISO a cycle late) must
+  fail.
+
+### B-0036: flash test sampled the combinational ready after the clock edge
+
+- Date: 2026-11-05
+- Project: ip/spi_flash/test/test_flash.ml (#27)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: the test hung waiting for read data.
+- Cause: `ready` depends on the request inputs; the test looked at the
+  value computed with the previous inputs and took an unaccepted request
+  for accepted.
+- Fix: evaluate the cycle with the new inputs before the edge (as the
+  core harness does) and look at ready/rvalid there.
+- Regression: as B-0037.
 
 ### B-0035: SDRAM command register reset to MODE REGISTER SET
 
