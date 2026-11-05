@@ -1,6 +1,6 @@
 (* Instruction classification and legality for RV32I and RV32E, with
    optional Zicsr, MRET and WFI ([~zicsr], issue #3), M ([~m]), A ([~a])
-   and FENCE.I ([~zifencei]) (#5); without a flag its instructions are
+   and FENCE.I ([~zifencei]) (#5), SRET and SFENCE.VMA ([~s], #6); without a flag its instructions are
    illegal and its outputs are constant 0. An instruction is illegal if
    its encoding is not in the ISA or, for RV32E, if any register field it
    uses names x16..x31. test/test_decode.ml checks this against the golden
@@ -38,6 +38,8 @@ module O = struct
     ; sc : 'a
     ; amo : 'a (* AMOSWAP/ADD/XOR/AND/OR/MIN/MAX/MINU/MAXU.W *)
     ; fence_i : 'a
+    ; sret : 'a
+    ; sfence_vma : 'a
     ; illegal : 'a
     }
   [@@deriving hardcaml]
@@ -48,6 +50,7 @@ let create
   ?(m = false)
   ?(a = false)
   ?(zifencei = false)
+  ?(s = false)
   ~(base : Rv32_model.Isa.base)
   (i : _ I.t)
   =
@@ -106,13 +109,20 @@ let create
       ))
     else gnd, gnd, gnd
   in
+  let sret, sfence_vma =
+    if s
+    then
+      ( x ==:. 0x10200073
+      , is 0b1110011 &: (funct7 ==:. 0b0001001) &: (x.:[11, 7] ==:. 0) &: (funct3 ==:. 0) )
+    else gnd, gnd
+  in
   let fence_i = if zifencei then is 0b0001111 &: (funct3 ==:. 1) else gnd in
   let uses_rd = lui |: auipc |: jal |: jalr |: load |: op_imm |: op |: csr |: muldiv |: lr |: sc |: amo in
   let uses_rs1 =
     jalr |: branch |: load |: store |: op_imm |: op |: (csr &: ~:csr_imm) |: muldiv |: lr |: sc
-    |: amo
+    |: amo |: sfence_vma
   in
-  let uses_rs2 = branch |: store |: op |: muldiv |: sc |: amo in
+  let uses_rs2 = branch |: store |: op |: muldiv |: sc |: amo |: sfence_vma in
   let bad_reg =
     match base with
     | Rv32i -> gnd
@@ -120,7 +130,7 @@ let create
   in
   let known =
     lui |: auipc |: jal |: jalr |: branch |: load |: store |: op_imm |: op |: fence
-    |: ecall |: ebreak |: csr |: mret |: wfi |: muldiv |: lr |: sc |: amo |: fence_i
+    |: ecall |: ebreak |: csr |: mret |: wfi |: muldiv |: lr |: sc |: amo |: fence_i |: sret |: sfence_vma
   in
   { O.lui
   ; auipc
@@ -145,6 +155,8 @@ let create
   ; sc
   ; amo
   ; fence_i
+  ; sret
+  ; sfence_vma
   ; illegal = ~:known |: bad_reg
   }
 ;;
