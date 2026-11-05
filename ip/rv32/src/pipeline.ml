@@ -735,6 +735,7 @@ let create ?(reset_pc = 0) ~base scope (i : _ I.t) =
     ; fetch = decision.value
     ; mem_sc = gnd
     ; mem_lock = gnd
+    ; retire_load = mux2 cd.amo c_amo_old.value rf_wdata.value
     ; reservation_lost = gnd
     }
   in

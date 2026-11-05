@@ -21,7 +21,7 @@ module arbiter_props (
     wire [1:0] sc_block = {sc_block1, sc_block0};
     arbiter dut (
         .clock(clock), .clear(init),
-        .valid(valid), .write(write), .sc(sc), .lock(lock), .core_sc(core_sc),
+        .valid(valid), .write(write), .sc(sc), .lock(lock), .core0_sc(core_sc[0]),
         .ready(ready), .rvalid(rvalid),
         .sel(sel), .sel_valid(sel_valid), .granted(granted), .snoop(snoop),
         .sc_block0(sc_block0), .sc_block1(sc_block1), .read_busy(read_busy), .locked(locked),

@@ -99,6 +99,7 @@ let create (c : Config.t) scope (i : _ I.t) =
         ~fetch_overlap:true
         ~tlb_entries:c.tlb_entries
         ~barrel_shift:true
+        ~hartid:h
         ~base:Rv32i
         scope
         { Rv32.Core.I.clock = i.clock
@@ -156,7 +157,7 @@ let create (c : Config.t) scope (i : _ I.t) =
       ; write = bit2 b_write
       ; sc = bit2 b_sc
       ; lock = bit2 (fun h -> let _, _, _, _, _, _, l = bridges.(h) in l)
-      ; core_sc = bit2 (fun h -> cores.(h).mem_sc)
+      ; core0_sc = cores.(0).mem_sc
       ; ready = arb_ready
       ; rvalid = arb_rvalid
       }

@@ -146,6 +146,9 @@ module O = struct
     ; fetch : 'a (* in Fetch, where interrupts are taken (bench only) *)
     ; mem_sc : 'a (* the write is an SC (the SoC's arbiter grants it first) *)
     ; mem_lock : 'a (* the read is an AMO's: keep the bus until its write *)
+    ; retire_load : 'a [@bits 32]
+        (* what the retiring load, LR or AMO read from memory (also with
+           rd = x0), for the lockstep bench *)
     ; reservation_lost : 'a (* a snooped write ended the reservation (bench) *)
     }
   [@@deriving hardcaml]
@@ -194,6 +197,7 @@ let create
   ?(s = false)
   ?(tlb_entries = 8)
   ?(barrel_shift = false)
+  ?(hartid = 0)
   ?(reset_pc = 0)
   ~(base : Rv32_model.Isa.base) scope (i : _ I.t) =
   let zicsr = zicsr || s in
@@ -508,7 +512,7 @@ let create
     ; 0xf11, zero 32
     ; 0xf12, zero 32
     ; 0xf13, zero 32
-    ; 0xf14, zero 32
+    ; 0xf14, of_int ~width:32 hartid (* mhartid (#9) *)
     ]
     @
     if not s
@@ -1231,6 +1235,7 @@ let create
   ; fetch = sm.is Fetch |: overlapping.value
   ; mem_sc = mem_write.value &: dec.sc &: (sm.is Execute |: sm.is Mem)
   ; mem_lock = mem_read.value &: dec.amo &: (sm.is Execute |: sm.is Mem)
+  ; retire_load = mux2 (sm.is Amo_write) amo_old.value rf_wdata.value
   ; reservation_lost = reservation_kill &: ~:(lr_set.value)
   }
 ;;
@@ -1245,6 +1250,7 @@ let hierarchical
   ?s
   ?tlb_entries
   ?barrel_shift
+  ?hartid
   ?reset_pc
   ~base
   scope
@@ -1263,6 +1269,7 @@ let hierarchical
        ?s
        ?tlb_entries
        ?barrel_shift
+       ?hartid
        ?reset_pc
        ~base)
 ;;

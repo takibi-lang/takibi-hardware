@@ -84,6 +84,7 @@ let run
   ?(max_cycles = 1_000_000)
   ?(lockstep = true)
   ?(trace = fun (_ : Rv32_model.Machine.retire) -> ())
+  ?(harts = 1)
   ?(on_output = fun (_ : char) -> ())
   ?sim
   ~boot_rom
@@ -93,7 +94,8 @@ let run
   let sim =
     match sim with
     | Some sim -> sim
-    | None -> Sim.create (Top.create (config ~boot_rom ()) (Scope.create ~flatten_design:true ()))
+    | None ->
+      Sim.create (Top.create (config ~harts ~boot_rom ()) (Scope.create ~flatten_design:true ()))
   in
   let i = Cyclesim.inputs sim in
   let pins = Cyclesim.outputs sim
@@ -116,26 +118,40 @@ let run
     then read (fun a -> image_byte flash (a - Map.flash_base))
     else None
   in
-  let ls =
-    Rv32_bench.Lockstep.create
-      ~zicsr:true
-      ~m:true
-      ~a:true
-      ~s:true
-      ~is_io:(fun a -> a < Map.ram_base || a >= Map.ram_base + Map.ram_bytes)
-      ~io_image
-      ~mem_base:Map.ram_base
-      ~base:Rv32i
-      ~mem_bytes:Map.ram_bytes
-      ~program:[]
-      ()
+  (* one golden model per hart, sharing the RAM; with two harts data
+     loads take the core's values (the other core's writes race with
+     them) *)
+  let make_ls ?shared_mem hartid =
+    let ls =
+      Rv32_bench.Lockstep.create
+        ~zicsr:true
+        ~m:true
+        ~a:true
+        ~s:true
+        ~is_io:(fun a -> a < Map.ram_base || a >= Map.ram_base + Map.ram_bytes)
+        ~io_image
+        ~mem_base:Map.ram_base
+        ~hartid
+        ?shared_mem
+        ~data_loads_from_core:(harts > 1)
+        ~base:Rv32i
+        ~mem_bytes:Map.ram_bytes
+        ~program:[]
+        ()
+    in
+    ls.model.pc <- 0;
+    ls
   in
-  ls.model.pc <- 0;
+  let ls0 = make_ls 0 in
+  let lss =
+    Array.init harts ~f:(fun h -> if h = 0 then ls0 else make_ls ~shared_mem:ls0.model.mem h)
+  in
   let pending_input = ref (String.to_list input) in
   let typing = ref false (* inside a line, after its prompt *)
   and next_key = ref 0 in
-  let irq_fetch = ref 0
-  and time_fetch = ref 0 in
+  let irq_fetch = Array.create ~len:harts 0
+  and time_fetch = Array.create ~len:harts 0 in
+  let mismatch () = Array.find_map lss ~f:(fun l -> l.mismatch) in
   i.clear := Bits.vdd;
   Cyclesim.cycle sim;
   i.clear := Bits.gnd;
@@ -149,7 +165,11 @@ let run
       on_output !out.[String.length !out - 1];
       if until !out then stop := true);
     let out = !out in
-    if cycle >= max_cycles || !stop || Option.is_some ls.mismatch || Bits.to_bool !(pins.core.halted)
+    if cycle >= max_cycles
+       || !stop
+       || Option.is_some (mismatch ())
+       || Bits.to_bool !(pins.core.halted)
+       || Bits.to_bool !(pins.core1.halted)
     then cycle
     else (
       (* the models see this cycle's (registered) pins *)
@@ -185,28 +205,31 @@ let run
       i.uart_rx := Bits.of_bool (Uart_bench.Uart_line.next line);
       Cyclesim.cycle_check sim;
       Cyclesim.cycle_before_clock_edge sim;
-      let irq_now = Bits.to_int !(o.irq)
-      and time_now = Bits.to_int !(o.mtime) in
+      let time_now = Bits.to_int !(o.mtime) in
       if lockstep
-      then (
-        let entry =
-          Bits.to_bool !(o.core.retire_trap)
-          && Bits.to_int !(o.core.retire_cause) land 0x8000_0000 <> 0
-        in
-        if Bits.to_bool !(o.core.retire) then trace (Rv32_bench.Lockstep.of_core o.core);
-        if Bits.to_bool !(o.core.retire)
-        then
-          Rv32_bench.Lockstep.on_retire
-            ~irq:irq_now
-            ~irq_fetch:(if entry then irq_now else !irq_fetch)
-            ~time:time_now
-            ~time_fetch:(if entry then time_now else !time_fetch)
-            ls
-            o.core;
-        if Bits.to_bool !(o.core.fetch)
-        then (
-          irq_fetch := irq_now;
-          time_fetch := time_now));
+      then
+        Array.iteri lss ~f:(fun h ls ->
+          let core = if h = 0 then o.core else o.core1 in
+          let irq_now = Bits.to_int !(if h = 0 then o.irq else o.irq1) in
+          if Bits.to_bool !(core.reservation_lost) then Rv32_bench.Lockstep.reservation_lost ls;
+          let entry =
+            Bits.to_bool !(core.retire_trap)
+            && Bits.to_int !(core.retire_cause) land 0x8000_0000 <> 0
+          in
+          if h = 0 && Bits.to_bool !(core.retire) then trace (Rv32_bench.Lockstep.of_core core);
+          if Bits.to_bool !(core.retire)
+          then
+            Rv32_bench.Lockstep.on_retire
+              ~irq:irq_now
+              ~irq_fetch:(if entry then irq_now else irq_fetch.(h))
+              ~time:time_now
+              ~time_fetch:(if entry then time_now else time_fetch.(h))
+              ls
+              core;
+          if Bits.to_bool !(core.fetch)
+          then (
+            irq_fetch.(h) <- irq_now;
+            time_fetch.(h) <- time_now));
       Cyclesim.cycle_at_clock_edge sim;
       Cyclesim.cycle_after_clock_edge sim;
       Rx_decoder.step decoder (Bits.to_bool !(pins.uart_tx));
@@ -214,10 +237,10 @@ let run
   in
   let cycles = loop 0 in
   { cycles
-  ; retired = ls.retired
-  ; interrupts = ls.interrupts
+  ; retired = Array.sum (module Int) lss ~f:(fun l -> l.retired)
+  ; interrupts = Array.sum (module Int) lss ~f:(fun l -> l.interrupts)
   ; output = Buffer.contents decoder.out
-  ; mismatch = ls.mismatch
+  ; mismatch = mismatch ()
   ; sdram_violations = List.rev sdram.violations
   ; flash_errors = List.rev w25q.errors
   ; halted = (if Bits.to_bool !(pins.core.halted) then Some (Bits.to_int !(pins.core.trap)) else None)

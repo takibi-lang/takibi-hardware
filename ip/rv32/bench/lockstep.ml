@@ -54,6 +54,9 @@ let create
   ?(s = false)
   ?(io_image = fun ~addr:(_ : int) ~bytes:(_ : int) -> (None : int option))
   ?(mem_base = 0)
+  ?hartid
+  ?shared_mem
+  ?(data_loads_from_core = false)
   ~base
   ~mem_bytes
   ~program
@@ -77,6 +80,8 @@ let create
             ~a
             ~zifencei:(m || a)
             ~s
+            ?hartid
+            ?mem:shared_mem
             ~mem_base
             ~csr_input:(fun csr -> csr_input (force t) csr)
             ~base
@@ -94,8 +99,18 @@ let create
   in
   let t = force t in
   Machine.load_program t.model program;
+  (* Several cores (#9): the other core's writes race with this core's
+     loads, so data loads take the value the core loaded (its rd); fetches
+     and page-table reads still come from the shared RAM. *)
+  if data_loads_from_core
+  then
+    t.model.data_load
+    <- (fun _ bytes -> Some (t.io_load_value land ((1 lsl (8 * bytes)) - 1)));
   t
 ;;
+
+(* The core lost its reservation to another core's write. *)
+let reservation_lost t = t.model.reservation <- None
 
 let trap_code : Machine.trap -> int = function
   | Ecall -> Rv32.Core.Trap.ecall
@@ -172,7 +187,8 @@ let on_retire ?(irq = 0) ?(irq_fetch = 0) ?(time = 0) ?(time_fetch = 0) t (o : B
    | _, Some code ->
      fail t (Printf.sprintf "retire #%d: core missed interrupt %d" t.retired code)
    | _, None -> ());
-  Option.iter core.rd_write ~f:(fun (_, v) -> t.io_load_value <- v);
+  (* the value the core loaded (also for an AMO with rd = x0) *)
+  t.io_load_value <- Bits.to_int !(o.retire_load);
   t.mip <- mip_of_irq irq;
   t.time <- time;
   t.mcycle <- Bits.to_int !(o.csr_mcycle);

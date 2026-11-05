@@ -75,17 +75,32 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 |----------|-------|
 | S0 | 2 |
 | S0f | 1 |
-| S1 | 23 |
+| S1 | 24 |
 | S2 | 2 (board-sim) |
 | S3 | 8 |
 | S4 | 4 |
 
-By class: testbench 19, toolchain 4, model 1, inference 1, resource 1,
+By class: testbench 20, toolchain 4, model 1, inference 1, resource 1,
 reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 1 more (B-0043), reset/init 1 more (B-0035), logic 3 more (B-0039, B-0041, B-0047), io/pinout 2 (B-0044, B-0046).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0050: lockstep fed an AMO with rd = x0 a stale loaded value
+
+- Date: 2026-11-05
+- Project: ip/rv32/bench/lockstep.ml (two-core lockstep, #9)
+- Found at: S1 (test_smp.ml: the model's AMOADD wrote 2 where the core
+  wrote 81); Catchable at: S1
+- Class: testbench
+- Symptom: a mismatch at the first `amoadd x0, x6, (x2)`.
+- Cause: with two cores, data loads take the core's loaded value, which
+  the bench read from the retiring instruction's rd write. `amoadd x0`
+  writes no register, so the model used the previous load's value.
+- Fix: the cores output what the retiring load, LR or AMO read
+  (retire_load), and the bench uses that.
+- Regression: test_smp.ml (AMOADD with rd = x0 on a shared counter).
 
 ### B-0049: combinational loop through the arbiter's two-bit sc_block
 
@@ -99,8 +114,11 @@ core and the MCU passed lockstep on their first run.
   mem_sc, and core 0 took its bit out of the same concatenation, so the
   graph had core 0's mem_sc -> sc_block -> core 0's sc_block -> mem_sc.
   No bit-level loop exists, but HardCaml checks node-level dependencies.
-- Fix: one output per core.
-- Regression: every SoC test elaborates the arbiter.
+- Fix: one output per core; the same for the input with the cores'
+  mem_sc (only core 0's is needed), which looped the same way once the
+  two-core test built the SoC.
+- Regression: every SoC test elaborates the arbiter; test_smp.ml the
+  two-core SoC.
 
 ### B-0048: an SC could decide while the other core's AMO held the bus
 

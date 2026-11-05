@@ -157,6 +157,9 @@ type t =
   ; mutable satp : int
   ; mutable stimecmp : int * int (* lo, hi *)
   ; hartid : int
+  ; mutable data_load : int -> int -> int option
+      (* [pa] [bytes]: a data load's raw value from outside (another hart's
+         writes race with it in a multi-core lockstep, #9); None: RAM/io *)
   }
 
 let mask32 v = v land 0xffff_ffff
@@ -224,6 +227,7 @@ let create
   ; satp = 0
   ; stimecmp = 0xffff_ffff, 0xffff_ffff
   ; hartid
+  ; data_load = (fun _ _ -> None)
   }
 ;;
 
@@ -535,6 +539,13 @@ let access_addr t ~access va n =
 
 let load_pa t pa n = if t.io.is_io pa then t.io.load ~addr:pa ~bytes:n else read t pa n
 
+(* A data load (not a fetch or a page-table read). *)
+let load_data t pa n =
+  match t.data_load pa n with
+  | Some v -> v
+  | None -> load_pa t pa n
+;;
+
 let alu (op : Isa.alu) a b =
   let sh = b land 31 in
   mask32
@@ -673,7 +684,7 @@ let execute t : (retire, trap) result =
       let addr = mask32 (r rs1 + offset) in
       let n = size width in
       let* pa = access_addr t ~access:Load addr n in
-      let v = load_pa t pa n in
+      let v = load_data t pa n in
       let v = if unsigned then v else mask32 (Isa.sign_extend v ~width:(8 * n)) in
       Ok (Some (rd, v), None, seq)
     | Store { width; rs1; rs2; offset } ->
@@ -742,7 +753,7 @@ let execute t : (retire, trap) result =
     | Lr { rd; rs1 } ->
       let addr = r rs1 in
       let* pa = access_addr t ~access:Load addr 4 in
-      let v = load_pa t pa 4 in
+      let v = load_data t pa 4 in
       t.reservation <- Some addr;
       Ok (Some (rd, v), None, seq)
     | Sc { rd; rs1; rs2 } ->
@@ -756,7 +767,7 @@ let execute t : (retire, trap) result =
     | Amo { op; rd; rs1; rs2 } ->
       let addr = r rs1 in
       let* pa = access_addr t ~access:Store addr 4 in
-      let old = load_pa t pa 4 in
+      let old = load_data t pa 4 in
       Ok (Some (rd, old), Some (addr, pa, 4, amo op old (r rs2)), seq)
     | Ecall -> Error Ecall
     | Ebreak -> Error Ebreak

@@ -29,7 +29,8 @@ module I = struct
     ; write : 'a [@bits 2]
     ; sc : 'a [@bits 2]
     ; lock : 'a [@bits 2]
-    ; core_sc : 'a [@bits 2]
+    ; core0_sc : 'a (* core 0 decides an SC now (one bit: a 2-bit port
+                       with core 1's would be a node-level loop, B-0049) *)
     ; ready : 'a
     ; rvalid : 'a
     }
@@ -93,7 +94,7 @@ let create scope (i : _ I.t) =
   in
   let sc_block0 = may_write 1 -- "sc_block0" in
   (* core 1 also waits while core 0 decides an SC in the same cycle *)
-  let sc_block1 = (may_write 0 |: i.core_sc.:(0)) -- "sc_block1" in
+  let sc_block1 = (may_write 0 |: i.core0_sc) -- "sc_block1" in
   { O.sel
   ; sel_valid
   ; granted
