@@ -10,6 +10,8 @@ int os_getc(void);
 void os_write(const char *s, unsigned int n);
 /* The cheapest system call the OS offers (for the round-trip benchmark). */
 void os_null_syscall(void);
+/* Sleep for at least us microseconds (the timer-latency benchmark). */
+void os_sleep_us(unsigned int us);
 /* Name of the OS, for the banner. */
 const char *os_name(void);
 /* Stop (never returns). */

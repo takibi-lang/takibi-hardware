@@ -20,6 +20,7 @@ void os_write(const char *s, unsigned int n)
 }
 
 void os_null_syscall(void) { getppid(); }
+void os_sleep_us(unsigned int us) { usleep(us); }
 const char *os_name(void) { return "Linux"; }
 
 void os_halt(void)

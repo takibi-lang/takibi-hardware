@@ -4,10 +4,17 @@
    device tree's timebase; rdcycle/rdinstret where the OS allows them) so
    the same commands compare Linux and Takibi on the same SoC.
 
-   Commands: help, echo TEXT, uptime, bench syscall [N], bench memcpy [KB]. */
+   Linux 6.18 enables only `time` for U-mode (scounteren = 2: rdcycle and
+   rdinstret need the SBI PMU extension, which the SoC's boot stub does not
+   offer), so cycles are derived from rdtime at the SoC's fixed clock
+   (CYCLES_PER_TICK); instruction counts are not available on Linux.
+
+   Commands: help, echo TEXT, uptime, bench syscall [N], bench memcpy [KB],
+   bench sleep [N] (timer wake-up latency). */
 #include "os.h"
 
 #define TIMEBASE_HZ 1000000u /* Soc_map.timebase_hz */
+#define CYCLES_PER_TICK 50u  /* Soc_map.system_clock_hz / timebase_hz */
 
 static void puts_(const char *s)
 {
@@ -69,6 +76,17 @@ static char *word(char *s)
   return s;
 }
 
+/* " (C cycles, P per item)" from a time difference and a count */
+static void put_cycles(unsigned long long dt, unsigned int items)
+{
+  unsigned long long c = dt * CYCLES_PER_TICK;
+  puts_(" (");
+  putu(c);
+  puts_(" cycles, ");
+  putu(items ? c / items : 0);
+  puts_(" per item)");
+}
+
 static unsigned char buffer[2][64 * 1024];
 
 static void bench_syscall(unsigned int n)
@@ -81,7 +99,27 @@ static void bench_syscall(unsigned int n)
   putu(n);
   puts_(" calls in ");
   putu(dt * 1000000ull / TIMEBASE_HZ);
-  puts_(" us\n");
+  puts_(" us");
+  put_cycles(dt, n);
+  puts_("\n");
+}
+
+/* Sleep 1 ms n times; the time beyond 1 ms per sleep is the timer
+   interrupt and wake-up latency (plus the system calls). */
+static void bench_sleep(unsigned int n)
+{
+  unsigned long long t0 = rdtime();
+  for (unsigned int i = 0; i < n; i++)
+    os_sleep_us(1000);
+  unsigned long long dt = rdtime() - t0;
+  unsigned long long us = dt * 1000000ull / TIMEBASE_HZ;
+  puts_("sleep: ");
+  putu(n);
+  puts_(" x 1 ms in ");
+  putu(us);
+  puts_(" us, latency ");
+  putu(n ? (us - 1000ull * n) / n : 0);
+  puts_(" us per sleep\n");
 }
 
 static void bench_memcpy(unsigned int kb)
@@ -98,7 +136,9 @@ static void bench_memcpy(unsigned int kb)
   putu(kb);
   puts_(" KiB in ");
   putu(dt * 1000000ull / TIMEBASE_HZ);
-  puts_(" us\n");
+  puts_(" us");
+  put_cycles(dt, n);
+  puts_("\n");
 }
 
 static void run(char *line)
@@ -107,7 +147,7 @@ static void run(char *line)
   if (!*line)
     return;
   if (streq(line, "help"))
-    puts_("commands: help, echo TEXT, uptime, bench syscall [N], bench memcpy [KB]\n");
+    puts_("commands: help, echo TEXT, uptime, bench syscall [N], bench memcpy [KB], bench sleep [N]\n");
   else if (streq(line, "echo")) {
     puts_(rest);
     puts_("\n");
@@ -120,8 +160,10 @@ static void run(char *line)
       bench_syscall(atou(arg, 1000));
     else if (streq(rest, "memcpy"))
       bench_memcpy(atou(arg, 16));
+    else if (streq(rest, "sleep"))
+      bench_sleep(atou(arg, 10));
     else
-      puts_("bench: syscall [N] | memcpy [KB]\n");
+      puts_("bench: syscall [N] | memcpy [KB] | sleep [N]\n");
   } else {
     puts_(line);
     puts_(": unknown command (try help)\n");
