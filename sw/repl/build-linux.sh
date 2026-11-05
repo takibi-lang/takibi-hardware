@@ -8,7 +8,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 out=$(realpath -m "$1")
 kout=$(realpath "$2")
-home=${PRACTICE_HARDCAML_HOME:-$HOME/.practice-hardcaml}
+home=${TAKIBI_HARDWARE_HOME:-$HOME/.takibi-hardware}
 version=$(sed -n 's/^LINUX_VERSION=//p' "$root/toolchain/linux.conf")
 src=$home/src/linux-$version
 mkdir -p "$out"

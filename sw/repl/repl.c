@@ -131,7 +131,7 @@ static void run(char *line)
 int main(void)
 {
   char line[128];
-  puts_("practice-hardcaml REPL on ");
+  puts_("takibi-hardware REPL on ");
   puts_(os_name());
   puts_("\n");
   for (;;) {

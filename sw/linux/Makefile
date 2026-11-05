@@ -25,7 +25,7 @@ model: images
 	$(BOOT) $(OUT)/boot/boot.bin $(OUT)/boot/soc.dtb $(OUT)/kernel/arch/riscv/boot/Image \
 	  --input '$(INPUT)' --until 'syscall: 1000 calls in' --max 100000000 | tee $(OUT)/model.log
 	@for l in 'Linux version 6' 'SBI specification v1.0 detected' 'is a 16550A' \
-	          'practice-hardcaml REPL on Linux' 'commands: help' 'hello from U-mode' \
+	          'takibi-hardware REPL on Linux' 'commands: help' 'hello from U-mode' \
 	          'syscall: 1000 calls in'; do \
 	  grep -qF "$$l" $(OUT)/model.log || { echo "FAIL: missing '$$l'" >&2; exit 1; }; done
 	@echo "OK: Linux boots on the SoC model and the REPL answers"

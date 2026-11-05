@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
 
 # The toolchain is pinned in toolchain/ and installed by scripts/toolchain.sh
-# under ~/.practice-hardcaml (issues #11, #12). Each part is cached under a
+# under ~/.takibi-hardware (issues #11, #12). Each part is cached under a
 # key derived from its pin, so a pin change downloads or rebuilds only that
 # part; the caches are saved right after installation, even if tests fail.
 env:
-  PRACTICE_HARDCAML_HOME: /home/runner/.practice-hardcaml
+  TAKIBI_HARDWARE_HOME: /home/runner/.takibi-hardware
   DUNE_CACHE: enabled
 
 jobs:
@@ -44,28 +44,28 @@ jobs:
         id: cad
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.PRACTICE_HARDCAML_HOME }}/toolchain/oss-cad-suite-*
+          path: ${{ env.TAKIBI_HARDWARE_HOME }}/toolchain/oss-cad-suite-*
           key: ${{ runner.os }}-${{ steps.keys.outputs.cad }}
 
       - name: Restore RISC-V GCC
         id: gcc
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.PRACTICE_HARDCAML_HOME }}/toolchain/riscv-gcc-*
+          path: ${{ env.TAKIBI_HARDWARE_HOME }}/toolchain/riscv-gcc-*
           key: ${{ runner.os }}-${{ steps.keys.outputs.gcc }}
 
       - name: Restore Linux cross GCC
         id: lgcc
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.PRACTICE_HARDCAML_HOME }}/toolchain/riscv32-ilp32d--*
+          path: ${{ env.TAKIBI_HARDWARE_HOME }}/toolchain/riscv32-ilp32d--*
           key: ${{ runner.os }}-${{ steps.keys.outputs.lgcc }}
 
       - name: Restore opam switch
         id: opam
         uses: actions/cache/restore@v4
         with:
-          path: ${{ env.PRACTICE_HARDCAML_HOME }}/opam
+          path: ${{ env.TAKIBI_HARDWARE_HOME }}/opam
           key: ${{ runner.os }}-${{ steps.keys.outputs.opam }}
 
       - name: Install the pinned toolchain (no-op when restored)
@@ -75,34 +75,34 @@ jobs:
         if: steps.cad.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.PRACTICE_HARDCAML_HOME }}/toolchain/oss-cad-suite-*
+          path: ${{ env.TAKIBI_HARDWARE_HOME }}/toolchain/oss-cad-suite-*
           key: ${{ runner.os }}-${{ steps.keys.outputs.cad }}
 
       - name: Save RISC-V GCC
         if: steps.gcc.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.PRACTICE_HARDCAML_HOME }}/toolchain/riscv-gcc-*
+          path: ${{ env.TAKIBI_HARDWARE_HOME }}/toolchain/riscv-gcc-*
           key: ${{ runner.os }}-${{ steps.keys.outputs.gcc }}
 
       - name: Save Linux cross GCC
         if: steps.lgcc.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.PRACTICE_HARDCAML_HOME }}/toolchain/riscv32-ilp32d--*
+          path: ${{ env.TAKIBI_HARDWARE_HOME }}/toolchain/riscv32-ilp32d--*
           key: ${{ runner.os }}-${{ steps.keys.outputs.lgcc }}
 
       - name: Save opam switch
         if: steps.opam.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: ${{ env.PRACTICE_HARDCAML_HOME }}/opam
+          path: ${{ env.TAKIBI_HARDWARE_HOME }}/opam
           key: ${{ runner.os }}-${{ steps.keys.outputs.opam }}
 
       - name: Linux kernel source
         uses: actions/cache@v4
         with:
-          path: ${{ env.PRACTICE_HARDCAML_HOME }}/downloads/linux-*.tar.xz
+          path: ${{ env.TAKIBI_HARDWARE_HOME }}/downloads/linux-*.tar.xz
           key: ${{ runner.os }}-linux-${{ hashFiles('toolchain/linux.conf') }}
 
       - name: Dune cache and riscv-arch-test sources

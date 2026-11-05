@@ -413,7 +413,7 @@ struct tms      time_info;
 
 
 #define Mic_secs_Per_Second     1000000
-/* practice-hardcaml: overridable with -DNUMBER_OF_RUNS=n. */
+/* takibi-hardware: overridable with -DNUMBER_OF_RUNS=n. */
 #ifndef NUMBER_OF_RUNS
 #define NUMBER_OF_RUNS		500 /* Default number of runs */
 #endif

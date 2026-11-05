@@ -1,4 +1,4 @@
-/* riscv-arch-test target definitions for the practice-hardcaml rv32 core
+/* riscv-arch-test target definitions for the takibi-hardware rv32 core
    (bench/arch_test). The core has no CSRs yet (issue #3), so tests run
    without the trap handler (rvtest_mtrap_routine is not defined); the test
    ends with EBREAK, which halts the core and the golden model, and the

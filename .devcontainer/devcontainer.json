@@ -13,14 +13,14 @@
       ]
     }
   },
-  "initializeCommand": "mkdir -p \"${localEnv:HOME}/practice-hardcaml\"",
+  "initializeCommand": "mkdir -p \"${localEnv:HOME}/takibi-hardware\"",
   "mounts": [
     "source=${localEnv:HOME}/claude/dot.claude,target=/home/vscode/.claude,type=bind",
     "source=${localEnv:HOME}/claude/per-clone/${localWorkspaceFolderBasename}/dot.claude.json,target=/home/vscode/.claude.json,type=bind",
     "source=${localEnv:HOME}/opencode/dot.share,target=/home/vscode/.local/share/opencode,type=bind",
     "source=${localEnv:HOME}/opencode/dot.state,target=/home/vscode/.local/state/opencode,type=bind",
     "source=${localEnv:HOME}/github/dot.config-gh-master-q,target=/home/vscode/.config/gh,type=bind",
-    "source=${localEnv:HOME}/practice-hardcaml,target=/home/vscode/.practice-hardcaml,type=bind"
+    "source=${localEnv:HOME}/takibi-hardware,target=/home/vscode/.takibi-hardware,type=bind"
   ],
   "runArgs": [
     "-v",
@@ -37,11 +37,11 @@
     "--cap-add=PERFMON",
     "--security-opt=seccomp=unconfined"
   ],
-  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.claude && sudo chown vscode:vscode /home/vscode/.local /home/vscode/.local/share /home/vscode/.practice-hardcaml && sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl git m4 pkg-config libffi-dev libgmp-dev libssl-dev zlib1g-dev locales bubblewrap ripgrep picocom usbutils jq flex bison bc cpio && sudo sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && sudo locale-gen && sudo usermod -aG plugdev,dialout vscode && sudo npm install -g @opencode/cli && ${containerWorkspaceFolder}/scripts/toolchain.sh install --dev && echo 'eval \"$(${containerWorkspaceFolder}/scripts/toolchain.sh env)\"' >> /home/vscode/.bashrc && echo 'eval \"$(${containerWorkspaceFolder}/scripts/toolchain.sh env)\"' >> /home/vscode/.profile && gh auth setup-git && git config --global url.https://github.com/.insteadOf git@github.com: && git config rerere.enabled true && git config pull.rebase merges && scripts/setup_clone.sh",
+  "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.claude && sudo chown vscode:vscode /home/vscode/.local /home/vscode/.local/share /home/vscode/.takibi-hardware && sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl git m4 pkg-config libffi-dev libgmp-dev libssl-dev zlib1g-dev locales bubblewrap ripgrep picocom usbutils jq flex bison bc cpio && sudo sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && sudo locale-gen && sudo usermod -aG plugdev,dialout vscode && sudo npm install -g @opencode/cli && ${containerWorkspaceFolder}/scripts/toolchain.sh install --dev && echo 'eval \"$(${containerWorkspaceFolder}/scripts/toolchain.sh env)\"' >> /home/vscode/.bashrc && echo 'eval \"$(${containerWorkspaceFolder}/scripts/toolchain.sh env)\"' >> /home/vscode/.profile && gh auth setup-git && git config --global url.https://github.com/.insteadOf git@github.com: && git config rerere.enabled true && git config pull.rebase merges && scripts/setup_clone.sh",
   "containerEnv": {
     "LANG": "en_US.UTF-8",
     "LC_ALL": "en_US.UTF-8",
     "OPAMYES": "true",
-    "PRACTICE_HARDCAML_HOME": "/home/vscode/.practice-hardcaml"
+    "TAKIBI_HARDWARE_HOME": "/home/vscode/.takibi-hardware"
   }
 }

@@ -1,6 +1,6 @@
-# practice-hardcaml Contributor License Agreement, version 1
+# takibi-hardware Contributor License Agreement, version 1
 
-practice-hardcaml is distributed under the GNU General Public License,
+takibi-hardware is distributed under the GNU General Public License,
 version 3 or (at your option) any later version. Its maintainer may
 also offer it under other terms, including commercial licenses that fund the project. To keep that possible, every contribution
 from someone other than the maintainer is accepted under this agreement.
@@ -8,13 +8,13 @@ You keep the copyright in your contribution; you give the maintainer a
 broad license to it.
 
 In this agreement, "We" and "Us" mean Kiwamu Okabe, the maintainer and
-copyright holder of practice-hardcaml, and any person or legal entity
+copyright holder of takibi-hardware, and any person or legal entity
 to which he
-transfers the maintenance of practice-hardcaml together with the rights granted
+transfers the maintenance of takibi-hardware together with the rights granted
 here. "You" means the individual or legal entity making a Contribution.
 A "Contribution" is any work of authorship, including source code,
 documentation, models, tests and designs, that You submit to Us for
-inclusion in practice-hardcaml, by a pull request, a patch, an issue comment that
+inclusion in takibi-hardware, by a pull request, a patch, an issue comment that
 proposes text or code, or any other means.
 
 ## 1. Copyright license
@@ -33,8 +33,8 @@ perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable
 license to make, have made, use, offer to sell, sell, import and otherwise
 transfer Your Contributions, under any patent claim You can license that
 is necessarily infringed by Your Contribution alone or by its combination
-with practice-hardcaml as it was when You submitted it. If You institute patent
-litigation alleging that practice-hardcaml or a Contribution infringes a patent,
+with takibi-hardware as it was when You submitted it. If You institute patent
+litigation alleging that takibi-hardware or a Contribution infringes a patent,
 the patent licenses granted to You by others under this agreement end on
 the date that litigation is filed.
 
@@ -66,7 +66,7 @@ provided "as is", without warranties or conditions of any kind.
 Include the following line in the description of Your first pull request,
 or in a comment on it, together with Your name:
 
-    I agree to the practice-hardcaml Contributor License Agreement, version 1 (CLA.md).
+    I agree to the takibi-hardware Contributor License Agreement, version 1 (CLA.md).
 
 A legal entity agrees by a statement from an authorized representative
 naming the individuals whose Contributions it covers. The agreement then

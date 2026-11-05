@@ -20,11 +20,11 @@
 # selects another OSS CAD Suite release (see scripts/with-toolchain.sh);
 # its checksum is then printed, not verified.
 #
-# Location: $PRACTICE_HARDCAML_HOME, default ~/.practice-hardcaml.
+# Location: $TAKIBI_HARDWARE_HOME, default ~/.takibi-hardware.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-HOME_DIR=${PRACTICE_HARDCAML_HOME:-$HOME/.practice-hardcaml}
+HOME_DIR=${TAKIBI_HARDWARE_HOME:-$HOME/.takibi-hardware}
 DOWNLOADS=$HOME_DIR/downloads
 TOOLS=$HOME_DIR/toolchain
 OCAML_VERSION=5.3.0
@@ -123,7 +123,7 @@ install_opam() {
 
 print_env() {
   cat <<EOF
-export PRACTICE_HARDCAML_HOME='$HOME_DIR'
+export TAKIBI_HARDWARE_HOME='$HOME_DIR'
 export PATH='$CAD_DIR/bin:$GCC_DIR/bin:$LGCC_DIR/bin':"\$PATH"
 export OPAMROOT='$OPAM_ROOT_DIR'
 eval "\$(opam env --root='$OPAM_ROOT_DIR' --switch='$SWITCH' --set-root --set-switch 2>/dev/null)"

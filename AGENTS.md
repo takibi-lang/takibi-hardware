@@ -1,4 +1,4 @@
-# practice-hardcaml: agent and contributor guide
+# takibi-hardware: agent and contributor guide
 
 This is the canonical guidance file for every coding agent (Claude Code,
 Codex, ...) and human contributor. `CLAUDE.md` only points here.
@@ -140,9 +140,9 @@ The toolchain is pinned (issues #11, #12) and the same everywhere:
 | opam packages, with all their dependencies | `toolchain/opam-packages.txt` |
 
 `scripts/toolchain.sh install` downloads, verifies and unpacks them under
-`~/.practice-hardcaml` (`PRACTICE_HARDCAML_HOME`); `eval "$(scripts/toolchain.sh env)"`
+`~/.takibi-hardware` (`TAKIBI_HARDWARE_HOME`); `eval "$(scripts/toolchain.sh env)"`
 puts them on PATH; `scripts/toolchain.sh check` fails on anything else.
-The devcontainer bind-mounts `~/.practice-hardcaml` from the host, so the
+The devcontainer bind-mounts `~/.takibi-hardware` from the host, so the
 download happens once; CI caches each part under a key derived from its
 pin (`.github/workflows/ci.yml`); Claude Code cloud sessions run the same
 script (`.claude/hooks/session-start.sh`). apt provides only tools that do

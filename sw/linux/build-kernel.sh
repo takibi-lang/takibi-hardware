@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the pinned Linux kernel (toolchain/linux.conf) for the Linux SoC
-# (#21) out of tree: unpack under $PRACTICE_HARDCAML_HOME/src, configure
+# (#21) out of tree: unpack under $TAKIBI_HARDWARE_HOME/src, configure
 # from tinyconfig + sw/linux/kernel.config, build arch/riscv/boot/Image.
 #
 #   build-kernel.sh OUT [INITRAMFS_LIST]
@@ -10,7 +10,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 out=$(realpath -m "$1")
 initramfs=${2:+$(realpath "$2")}
-home=${PRACTICE_HARDCAML_HOME:-$HOME/.practice-hardcaml}
+home=${TAKIBI_HARDWARE_HOME:-$HOME/.takibi-hardware}
 version=$(sed -n 's/^LINUX_VERSION=//p' "$root/toolchain/linux.conf")
 sha=$(sed -n 's/^LINUX_SHA256=//p' "$root/toolchain/linux.conf")
 major=${version%%.*}

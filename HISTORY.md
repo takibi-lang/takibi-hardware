@@ -138,7 +138,7 @@ done, what was learned, and the numbers measured that day.
   Icarus 14 devel, Verilator 5.053 devel, z3 4.15.5), xPack
   riscv-none-elf-gcc 15.2.0-1 (multilibs rv32e, rv32i, rv32im), and the
   127 opam packages (hardcaml v0.17.1) with exact versions.
-- scripts/toolchain.sh installs them under ~/.practice-hardcaml (bind mount
+- scripts/toolchain.sh installs them under ~/.takibi-hardware (bind mount
   in the devcontainer, actions/cache in CI keyed by each pin, the same
   script in cloud sessions); `check` fails on unpinned tools (selftest).
   apt no longer installs EDA tools or the cross compiler.

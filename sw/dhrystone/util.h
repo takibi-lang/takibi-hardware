@@ -1,4 +1,4 @@
-/* riscv-tests' util.h replacement for the practice-hardcaml MCU. */
+/* riscv-tests' util.h replacement for the takibi-hardware MCU. */
 #ifndef UTIL_H
 #define UTIL_H
 

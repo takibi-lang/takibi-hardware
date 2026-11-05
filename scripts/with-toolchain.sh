@@ -28,7 +28,7 @@ case $which in
     [ "$which" = pinned ] || export OSS_CAD_SUITE_DATE=$which
     "$here/toolchain.sh" install --no-opam
     date=${OSS_CAD_SUITE_DATE:-$(sed -n 's/^OSS_CAD_SUITE_DATE=//p' "$here/../toolchain/oss-cad-suite.conf")}
-    PATH=${PRACTICE_HARDCAML_HOME:-$HOME/.practice-hardcaml}/toolchain/oss-cad-suite-$date/bin:$PATH
+    PATH=${TAKIBI_HARDWARE_HOME:-$HOME/.takibi-hardware}/toolchain/oss-cad-suite-$date/bin:$PATH
     if [ "$which" = pinned ]; then export BUILD=build; else export BUILD=build-oss-$date; fi
     ;;
 esac

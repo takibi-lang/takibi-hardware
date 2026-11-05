@@ -1,4 +1,4 @@
-/* Measurement hooks for riscv-tests' Dhrystone on the practice-hardcaml MCU.
+/* Measurement hooks for riscv-tests' Dhrystone on the takibi-hardware MCU.
    setStats(1) is called just before the timed loop, setStats(0) just after
    it; we record mcycle and minstret (the standard CSRs, on the Zicsr i9
    build) or else the memory-mapped CYCLE and INSTRET counters, and print the difference in
