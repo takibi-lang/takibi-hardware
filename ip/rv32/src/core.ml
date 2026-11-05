@@ -48,6 +48,9 @@
    On ECALL, EBREAK, an illegal instruction or a misaligned access/target
    the core stops in Halted without changing state, like the golden model.
 
+   With [~barrel_shift:true] (#4, #23) shifts complete in Execute through
+   a barrel shifter instead of one bit per cycle in Shift.
+
    With [~zicsr:true] (issue #3; the ECP5 MCU) the core also has the Zicsr
    instructions, MRET, WFI (a no-op), the machine-mode CSRs of
    Rv32_model.Machine (same implementation choices), mcycle/minstret, and
@@ -184,6 +187,7 @@ let create
   ?(zifencei = false)
   ?(s = false)
   ?(tlb_entries = 8)
+  ?(barrel_shift = false)
   ?(reset_pc = 0)
   ~(base : Rv32_model.Isa.base) scope (i : _ I.t) =
   let zicsr = zicsr || s in
@@ -277,8 +281,28 @@ let create
   let%hw misaligned_mem =
     (size ==:. 1 &: agu.:(0)) |: (size ==:. 2 &: (agu.:[1, 0] <>:. 0))
   in
+  (* [~barrel_shift] (#4, #23): shifts complete in Execute *)
+  let%hw shift_result =
+    if barrel_shift
+    then (
+      let by = (mux2 dec.op b imm).:[4, 0] in
+      mux2
+        (funct3 ==:. 1)
+        (log_shift sll a by)
+        (mux2 alt (log_shift sra a by) (log_shift srl a by)))
+    else zero 32
+  in
   let%hw exec_result =
-    mux2 dec.lui imm (mux2 dec.auipc agu (mux2 (dec.jal |: dec.jalr) pc_plus4 alu.result))
+    mux2
+      dec.lui
+      imm
+      (mux2
+         dec.auipc
+         agu
+         (mux2
+            (dec.jal |: dec.jalr)
+            pc_plus4
+            (if barrel_shift then mux2 dec.shift shift_result alu.result else alu.result)))
   in
   (* Store lanes. *)
   let%hw lane = daddr.:[1, 0] in
@@ -965,7 +989,7 @@ let create
                                        then [ maddr <-- agu; sm.set_next Mem ]
                                        else mem_path)
                                       [ if_
-                                          dec.shift
+                                          (if barrel_shift then gnd else dec.shift)
                                           [ shift_value <-- a
                                           ; shift_count
                                             <-- (mux2 dec.op b imm).:[4, 0]
@@ -1173,10 +1197,34 @@ let create
   }
 ;;
 
-let hierarchical ?zicsr ?dual_read ?fetch_overlap ?m ?a ?zifencei ?s ?tlb_entries ?reset_pc ~base scope =
+let hierarchical
+  ?zicsr
+  ?dual_read
+  ?fetch_overlap
+  ?m
+  ?a
+  ?zifencei
+  ?s
+  ?tlb_entries
+  ?barrel_shift
+  ?reset_pc
+  ~base
+  scope
+  =
   let module H = Hierarchy.In_scope (I) (O) in
   H.hierarchical
     ~scope
     ~name:"rv32_core"
-    (create ?zicsr ?dual_read ?fetch_overlap ?m ?a ?zifencei ?s ?tlb_entries ?reset_pc ~base)
+    (create
+       ?zicsr
+       ?dual_read
+       ?fetch_overlap
+       ?m
+       ?a
+       ?zifencei
+       ?s
+       ?tlb_entries
+       ?barrel_shift
+       ?reset_pc
+       ~base)
 ;;

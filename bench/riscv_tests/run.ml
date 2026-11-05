@@ -30,6 +30,7 @@ let run_core dir name ~tohost =
       ~m:true
       ~a:true
       ~s:true
+      ~barrel_shift:true
       ~base:Rv32i
       ~mem_base:0x8000_0000
       ~mem_bytes

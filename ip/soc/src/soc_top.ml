@@ -87,6 +87,7 @@ let create (c : Config.t) scope (i : _ I.t) =
       ~dual_read:true
       ~fetch_overlap:true
       ~tlb_entries:c.tlb_entries
+      ~barrel_shift:true
       ~base:Rv32i
       scope
       { Rv32.Core.I.clock = i.clock

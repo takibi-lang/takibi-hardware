@@ -19,7 +19,7 @@ type result =
   }
 [@@deriving sexp_of]
 
-let create_sim ?zicsr ?dual_read ?fetch_overlap ?m ?a ?s ?tlb_entries ?reset_pc ~base () =
+let create_sim ?zicsr ?dual_read ?fetch_overlap ?m ?a ?s ?tlb_entries ?barrel_shift ?reset_pc ~base () =
   let scope = Scope.create ~flatten_design:true () in
   Sim.create
     ~config:Cyclesim.Config.trace_all
@@ -32,6 +32,7 @@ let create_sim ?zicsr ?dual_read ?fetch_overlap ?m ?a ?s ?tlb_entries ?reset_pc 
        ?zifencei:m
        ?s
        ?tlb_entries
+       ?barrel_shift
        ?reset_pc
        ~base
        scope)
@@ -60,11 +61,12 @@ let run
   ?(mem_bytes = 4096)
   ?(max_cycles = 100_000)
   ?wait_states
+  ?barrel_shift
   ?sim
   ?model_program
   program
   =
-  let sim = match sim with Some s -> s | None -> create_sim ~zicsr ?dual_read ?fetch_overlap ~m ~a ~s ~reset_pc:mem_base ~base () in
+  let sim = match sim with Some s -> s | None -> create_sim ~zicsr ?dual_read ?fetch_overlap ~m ~a ~s ?barrel_shift ~reset_pc:mem_base ~base () in
   let lockstep =
     Lockstep.create ~zicsr ~m ~a ~s ~mem_base ~base ~mem_bytes ~program:(Option.value model_program ~default:program) ()
   in
