@@ -73,17 +73,54 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | Found at | Count |
 |----------|-------|
 | S0 | 1 |
-| S1 | 11 |
+| S1 | 14 |
 | S2 | 2 (board-sim) |
 | S3 | 6 |
 | S4 | 2 |
 
-By class: testbench 11, toolchain 4, model 1, inference 1, resource 1,
+By class: testbench 14, toolchain 4, model 1, inference 1, resource 1,
 reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 1 (B-0031).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0034: Sv32 random test: the M handler clobbered the interrupted S handler
+
+- Date: 2026-11-05
+- Project: ip/rv32/test/test_mmu.ml (random Sv32 lockstep programs, #6)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: 6 of 100 programs did not end (no lockstep mismatch).
+- Cause: both handlers used x28/x29; an M interrupt inside the S handler
+  overwrote the sepc value being computed, and SRET went to 0.
+- Fix: the M handler has its own temporaries (x25, x26).
+- Regression: the test itself (every program must end with EBREAK).
+
+### B-0033: Sv32 random test enabled M interrupts during its setup
+
+- Date: 2026-11-05
+- Project: ip/rv32/test/test_mmu.ml (random Sv32 lockstep programs, #6)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: a program entered the body at the wrong address.
+- Cause: mstatus.MIE was set before the final MRET; an interrupt after
+  mepc was written replaced mepc with the interrupted setup pc.
+- Fix: enable through MPIE, which MRET copies into MIE.
+- Regression: as B-0034.
+
+### B-0032: Sv32 random test jumped into data pages that may be executable
+
+- Date: 2026-11-05
+- Project: ip/rv32/test/test_mmu.ml (random Sv32 lockstep programs, #6)
+- Found at: S1; Catchable at: S1
+- Class: testbench
+- Symptom: programs ran until the cycle limit (no lockstep mismatch).
+- Cause: the targets meant to raise an instruction page fault included
+  the data pages, whose random permissions can include X; the core then
+  executed random data.
+- Fix: only targets that are never executable.
+- Regression: as B-0034.
 
 ### B-0031: core input port named `time`, a Verilog keyword
 

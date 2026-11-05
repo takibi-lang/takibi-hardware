@@ -6,7 +6,7 @@
      run.exe DIR...          on the golden model
      run.exe --core DIR...   on the core (i9 configuration with M, A and
                              S/U modes), in lockstep with the model (#5,
-                             #6; `p` tests: the core has no MMU yet) *)
+                             #6; `p` and `v` tests) *)
 open! Base
 open Stdio
 module M = Rv32_model.Machine
@@ -54,7 +54,7 @@ let run_core dir name ~tohost =
 let core = ref false
 
 (* Tests the core cannot run yet, with the reason (printed as SKIP). *)
-let core_skips = [ "rv32si-p-dirty", "needs Sv32 in the core (Linux L3, #6)" ]
+let core_skips : (string * string) list = []
 
 let run_test dir name =
   let tohost =

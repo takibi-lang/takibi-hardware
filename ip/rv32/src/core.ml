@@ -59,6 +59,18 @@
    model's priority order MEI, MSI, MTI, SEI, SSI, STI, when the target
    mode's vector is non-zero.
 
+   Sv32 ([~s]; #6, Linux L3): instruction and data TLBs, direct-mapped
+   with [tlb_entries] entries each (registers), indexed by the low VPN
+   bits; an entry holds a 4 KiB page or a 4 MiB superpage with the PTE's
+   R/W/X/U/A/D bits. Permissions, A and D are checked on every access
+   against the current privilege, SUM and MXR (MPRV/MPP for data). A miss,
+   or a hit that would fault, walks the page table (Ptw_l1, Ptw_l1_data,
+   Ptw_l0_data; PTE addresses are concatenations, no adder) and then either
+   fills the TLB and retries or raises the page fault: a fault is always
+   decided on the PTE in memory, so a PTE whose A/D bits software has just
+   set (Svade) is seen without an SFENCE.VMA. SFENCE.VMA and satp writes
+   flush both TLBs. While fetches are translated, fetch_overlap is off.
+
    The retire_* outputs describe each completed instruction in the same terms
    as Rv32_model.Machine.retire; they exist for lockstep testing and are
    removed by synthesis when unconnected. *)
@@ -118,6 +130,16 @@ module O = struct
   [@@deriving hardcaml]
 end
 
+module Tlb_entry = struct
+  type t =
+    { valid : Always.Variable.t
+    ; tag : Always.Variable.t (* VPN; VPN[1] only for a superpage *)
+    ; ppn : Always.Variable.t (* PPN bits 19..0 (32-bit physical addresses) *)
+    ; super : Always.Variable.t
+    ; perm : Always.Variable.t (* D A U X W R *)
+    }
+end
+
 module State = struct
   type t =
     | Fetch
@@ -130,6 +152,9 @@ module State = struct
     | Div
     | Amo
     | Amo_write
+    | Ptw_l1
+    | Ptw_l1_data
+    | Ptw_l0_data
     | Halted
   [@@deriving sexp_of, compare ~localize, enumerate]
 end
@@ -142,6 +167,7 @@ let create
   ?a:(ext_a = false)
   ?(zifencei = false)
   ?(s = false)
+  ?(tlb_entries = 8)
   ?(reset_pc = 0)
   ~(base : Rv32_model.Isa.base) scope (i : _ I.t) =
   let zicsr = zicsr || s in
@@ -506,6 +532,107 @@ let create
     |: (dec.sfence_vma &: (priv_u |: (priv_s &: tvm)))
     |: (if s then dec.wfi &: (priv_u |: (priv_s &: tw)) else gnd)
   in
+  (* Sv32 (see the header). *)
+  let%hw satp_mode = if s then satp.value.:(31) else gnd in
+  let%hw data_priv = mux2 (sv mstatus_mprv) mstatus_mpp.value priv in
+  let%hw fetch_xlate = satp_mode &: ~:priv_m in
+  let%hw data_xlate = satp_mode &: (data_priv <>:. 3) in
+  let tlb_bits = Int.ceil_log2 tlb_entries in
+  if s && (tlb_entries < 2 || 1 lsl tlb_bits <> tlb_entries)
+  then raise_s [%message "tlb_entries must be a power of 2, at least 2" (tlb_entries : int)];
+  let make_tlb prefix =
+    Array.init (if s then tlb_entries else 0) ~f:(fun k ->
+      let r field width =
+        let v = Always.Variable.reg ~width spec in
+        ignore (v.value -- Printf.sprintf "%s%d_%s" prefix k field : Signal.t);
+        v
+      in
+      { Tlb_entry.valid = r "valid" 1
+      ; tag = r "tag" 20
+      ; ppn = r "ppn" 20
+      ; super = r "super" 1
+      ; perm = r "perm" 6
+      })
+  in
+  let itlb = make_tlb "itlb" in
+  let dtlb = make_tlb "dtlb" in
+  let tlb_index va = va.:[12 + tlb_bits - 1, 12] in
+  (* [perm]: D A U X W R (PTE bits 7, 6, 4..1). *)
+  let perm_of_pte pte = pte.:(7) @: pte.:(6) @: pte.:[4, 1] in
+  let perm_ok ~perm ~is_fetch ~is_store ~eff =
+    let r = perm.:(0)
+    and w = perm.:(1)
+    and x = perm.:(2)
+    and u = perm.:(3)
+    and a = perm.:(4)
+    and d = perm.:(5) in
+    let permitted = mux2 is_fetch x (mux2 is_store w (r |: (x &: sv mstatus_mxr))) in
+    let user_ok = mux2 (eff ==:. 0) u (~:u |: (~:is_fetch &: sv mstatus_sum)) in
+    permitted &: user_ok &: a &: (~:is_store |: d)
+  in
+  (* Lookup: (usable, physical address). *)
+  let lookup tlb va ~is_fetch ~is_store ~eff =
+    if not s
+    then gnd, va
+    else (
+      let idx = tlb_index va in
+      let sel f = mux idx (Array.to_list tlb |> List.map ~f:(fun e -> (f e : Always.Variable.t).value)) in
+      let valid = sel (fun e -> e.Tlb_entry.valid)
+      and tag = sel (fun e -> e.tag)
+      and ppn = sel (fun e -> e.ppn)
+      and super = sel (fun e -> e.super)
+      and perm = sel (fun e -> e.perm) in
+      let hit = valid &: mux2 super (tag.:[19, 10] ==: va.:[31, 22]) (tag ==: va.:[31, 12]) in
+      ( hit &: perm_ok ~perm ~is_fetch ~is_store ~eff
+      , mux2 super (ppn.:[19, 10] @: va.:[21, 0]) (ppn @: va.:[11, 0]) ))
+  in
+  let%hw data_store = dec.store |: dec.sc |: dec.amo in
+  let itlb_ok, itlb_pa = lookup itlb pc.value ~is_fetch:vdd ~is_store:gnd ~eff:priv in
+  let dtlb_ok, dtlb_pa = lookup dtlb agu ~is_fetch:gnd ~is_store:data_store ~eff:data_priv in
+  let%hw itlb_ok = itlb_ok in
+  let%hw dtlb_ok = dtlb_ok in
+  let%hw fetch_pa = mux2 fetch_xlate itlb_pa pc.value in
+  let%hw data_pa = mux2 data_xlate dtlb_pa agu in
+  let%hw fetch_ready = ~:fetch_xlate |: itlb_ok in
+  let%hw data_ready = ~:data_xlate |: dtlb_ok in
+  (* The page-table walk: the virtual address and the kind of access
+     (0 fetch, 1 load, 2 store/AMO). *)
+  let%hw_var walk_va = Always.Variable.reg ~width:32 spec in
+  let%hw_var walk_kind = Always.Variable.reg ~width:2 spec in
+  let%hw walk_fetch = walk_kind.value ==:. 0 in
+  let%hw walk_store = walk_kind.value ==:. 2 in
+  let%hw walk_eff = mux2 walk_fetch priv data_priv in
+  let pte = i.mem_rdata in
+  let%hw pte_invalid = ~:(pte.:(0)) |: (~:(pte.:(1)) &: pte.:(2)) in
+  let%hw pte_leaf = pte.:(1) |: pte.:(3) in
+  let%hw pte_perm_ok =
+    perm_ok ~perm:(perm_of_pte pte) ~is_fetch:walk_fetch ~is_store:walk_store ~eff:walk_eff
+  in
+  let%hw ptw_l1_addr = (if s then satp.value.:[19, 0] else zero 20) @: walk_va.value.:[31, 22] @: zero 2 in
+  let%hw ptw_l0_addr = pte.:[29, 10] @: walk_va.value.:[21, 12] @: zero 2 in
+  let%hw walk_cause =
+    mux2 walk_fetch (of_int ~width:5 12) (mux2 walk_store (of_int ~width:5 15) (of_int ~width:5 13))
+  in
+  let tlb_flush =
+    Array.to_list itlb @ Array.to_list dtlb
+    |> List.map ~f:(fun e -> Always.(e.Tlb_entry.valid <-- gnd))
+  in
+  let tlb_fill ~super =
+    let fill tlb =
+      Array.to_list tlb
+      |> List.mapi ~f:(fun k e ->
+        Always.(
+          when_
+            (tlb_index walk_va.value ==:. k)
+            [ e.Tlb_entry.valid <-- vdd
+            ; e.tag <-- walk_va.value.:[31, 12]
+            ; e.ppn <-- pte.:[29, 10]
+            ; e.super <-- super
+            ; e.perm <-- perm_of_pte pte
+            ]))
+    in
+    Always.[ if_ walk_fetch (fill itlb) (fill dtlb) ]
+  in
   (* Outputs driven from the state machine. *)
   let%hw_var mem_read = Always.Variable.wire ~default:gnd in
   let%hw_var mem_write = Always.Variable.wire ~default:gnd in
@@ -515,12 +642,13 @@ let create
   let%hw_var retire_trap = Always.Variable.wire ~default:gnd in
   let%hw_var retire_cause = Always.Variable.wire ~default:(zero 32) in
   let%hw_var retire_irq = Always.Variable.wire ~default:gnd in
+  let%hw_var fetch_fault = Always.Variable.wire ~default:gnd in
   let%hw_var overlapping = Always.Variable.wire ~default:gnd in
   let%hw overlap_ok =
     if fetch_overlap
     then
       ~:(mem_op |: dec.csr |: dec.mret |: dec.sret |: dec.sfence_vma |: irq_due |: dec.mul
-         |: dec.div)
+         |: dec.div |: fetch_xlate)
     else gnd
   in
   (* M: the product (registered) and the divider. *)
@@ -685,7 +813,7 @@ let create
         ; w 0x141 [ sepc <-- v.:[31, 2] @: zero 2 ]
         ; w 0x142 [ scause <-- v.:(31) @: zero 26 @: v.:[4, 0] ]
         ; w 0x143 [ stval <-- v ]
-        ; w 0x180 [ satp <-- (v &: of_int ~width:32 0x803f_ffff) ]
+        ; w 0x180 ((satp <-- (v &: of_int ~width:32 0x803f_ffff)) :: tlb_flush)
         ; (* Counter writes (S only, as Linux-class software expects them
              writable): the written value is what the next instruction
              reads, so they override this cycle's increment. *)
@@ -707,6 +835,15 @@ let create
       ; sm.set_next Fetch
       ]
   in
+  (* After a walk: retry the access (Fetch, or Execute for data), or
+     raise the page fault. A fetch fault retires with instruction 0, as in
+     the model. *)
+  let walk_retry = Always.[ if_ walk_fetch [ sm.set_next Fetch ] [ sm.set_next Execute ] ] in
+  let walk_fault =
+    Always.(
+      (fetch_fault <-- walk_fetch)
+      :: halt ~cause:walk_cause ~tval:walk_va.value Trap.page_fault)
+  in
   Always.(
     compile
       [ (if zicsr
@@ -726,7 +863,11 @@ let create
                         ~cause:(vdd @: zero 26 @: irq_code)
                         ~tval:(zero 32)
                         ~deleg:irq_deleg)
-                  [ mem_read <-- vdd; sm.set_next Decode ]
+                  [ if_
+                      fetch_ready
+                      [ mem_read <-- vdd; sm.set_next Decode ]
+                      [ walk_va <-- pc.value; walk_kind <--. 0; sm.set_next Ptw_l1 ]
+                  ]
               ] )
           ; ( Decode
             , [ ir_reg <-- i.mem_rdata
@@ -757,6 +898,12 @@ let create
                                       (halt ~cause:(code 4) ~tval:agu Trap.misaligned_access)
                                   ]
                                   [ if_
+                                      (mem_op &: ~:data_ready)
+                                      [ walk_va <-- agu
+                                      ; walk_kind <-- mux2 data_store (of_int ~width:2 2) (of_int ~width:2 1)
+                                      ; sm.set_next Ptw_l1
+                                      ]
+                                      [ if_
                                       (dec.load |: dec.lr)
                                       [ mem_read <-- vdd
                                       ; load_offset <-- lane
@@ -803,6 +950,7 @@ let create
                                                  ]
                                                else [])
                                           ; when_ (dec.csr &: csr_writes) (csr_write ())
+                                          ; when_ dec.sfence_vma tlb_flush
                                           ; proc
                                               (complete
                                                  ~result:
@@ -848,6 +996,7 @@ let create
                                           ]
                                       ]
                                   ]
+                                    ]
                               ]
                           ]
                       ]
@@ -896,14 +1045,44 @@ let create
               ; mem_write <-- vdd
               ; proc (complete ~result:amo_old.value ~next:pc_plus4)
               ] )
+          ; Ptw_l1, [ mem_read <-- vdd; sm.set_next Ptw_l1_data ]
+          ; ( Ptw_l1_data
+            , [ if_
+                  (pte_invalid |: (pte_leaf &: (pte.:[19, 10] <>:. 0)) |: (pte_leaf &: ~:pte_perm_ok))
+                  walk_fault
+                  [ if_
+                      pte_leaf
+                      (tlb_fill ~super:vdd @ walk_retry)
+                      [ mem_read <-- vdd; sm.set_next Ptw_l0_data ]
+                  ]
+              ] )
+          ; ( Ptw_l0_data
+            , [ if_
+                  (pte_invalid |: ~:pte_leaf |: ~:pte_perm_ok)
+                  walk_fault
+                  (tlb_fill ~super:gnd @ walk_retry)
+              ] )
           ; Halted, []
           ]
       ]);
   let%hw mem_addr =
-    mux2
-      (sm.is Fetch)
-      pc.value
-      (if fetch_overlap then mux2 mem_op agu next_pc else agu)
+    if s
+    then
+      mux2
+        (sm.is Fetch)
+        fetch_pa
+        (mux2
+           (sm.is Ptw_l1)
+           ptw_l1_addr
+           (mux2
+              (sm.is Ptw_l1_data)
+              ptw_l0_addr
+              (if fetch_overlap then mux2 mem_op data_pa next_pc else data_pa)))
+    else
+      mux2
+        (sm.is Fetch)
+        pc.value
+        (if fetch_overlap then mux2 mem_op agu next_pc else agu)
   in
   { O.mem_addr
   ; mem_read = mem_read.value
@@ -914,7 +1093,7 @@ let create
   ; trap = trap.value
   ; retire = retire.value
   ; retire_pc = pc.value
-  ; retire_insn = mux2 retire_irq.value (zero 32) ir
+  ; retire_insn = mux2 (retire_irq.value |: fetch_fault.value) (zero 32) ir
   ; retire_rd_we = rf_we.value
   ; retire_rd = uresize rd 5
   ; retire_rd_value = rf_wdata.value

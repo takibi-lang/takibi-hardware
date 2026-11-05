@@ -7,7 +7,7 @@ ROOT := $(abspath ../..)
 RUN := $(ROOT)/_build/default/bench/riscv_tests/run.exe
 GROUPS := rv32ui rv32um rv32ua rv32mi rv32si
 V_GROUPS := rv32ui rv32um rv32ua
-# On the core (i9 configuration with M and A) in lockstep with the model.
+# On the core (M, A, S/U and Sv32) in lockstep with the model, p and v.
 CORE_GROUPS := rv32ui rv32um rv32ua rv32mi rv32si
 MARCH := rv32ima_zicsr_zifencei
 
@@ -26,7 +26,7 @@ run: build
 	  then echo "FAIL: riscv-tests runner accepted a failing test" >&2; exit 1; \
 	  else echo "OK: riscv-tests runner rejects a failing test"; fi
 	$(RUN) $(addprefix build/,$(GROUPS)) $(addsuffix _v,$(addprefix build/,$(V_GROUPS)))
-	$(RUN) --core $(addprefix build/,$(CORE_GROUPS))
+	$(RUN) --core $(addprefix build/,$(CORE_GROUPS)) $(addsuffix _v,$(addprefix build/,$(V_GROUPS)))
 
 clean:
 	rm -rf build

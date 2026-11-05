@@ -15,7 +15,7 @@ type result =
   }
 [@@deriving sexp_of]
 
-let create_sim ?zicsr ?dual_read ?fetch_overlap ?m ?a ?s ?reset_pc ~base () =
+let create_sim ?zicsr ?dual_read ?fetch_overlap ?m ?a ?s ?tlb_entries ?reset_pc ~base () =
   let scope = Scope.create ~flatten_design:true () in
   Sim.create
     ~config:Cyclesim.Config.trace_all
@@ -27,6 +27,7 @@ let create_sim ?zicsr ?dual_read ?fetch_overlap ?m ?a ?s ?reset_pc ~base () =
        ?a
        ?zifencei:m
        ?s
+       ?tlb_entries
        ?reset_pc
        ~base
        scope)
