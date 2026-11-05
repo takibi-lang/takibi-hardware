@@ -11,7 +11,9 @@
 
    Commands: help, echo TEXT, uptime, bench syscall [N], bench memcpy [KB],
    bench sleep [N] (timer wake-up latency), bench dhrystone (on Linux:
-   dhrystone_linux.c). */
+   dhrystone_linux.c), bench uart [N] (N round trips of one byte: the REPL
+   sends 'U' and waits for the host to echo it, e.g.
+   designs/soc_i9/uart_roundtrip.py). */
 #include "os.h"
 
 #define TIMEBASE_HZ 1000000u /* Soc_map.timebase_hz */
@@ -107,6 +109,36 @@ static void bench_syscall(unsigned int n)
   puts_("\n");
 }
 
+/* One byte to the host and back, n times, with the console raw. At 115200
+   baud a byte is 86.8 us on the wire each way; the rest is the two
+   systems' latency. */
+static void bench_uart(unsigned int n)
+{
+  os_console_raw(1);
+  unsigned long long t0 = rdtime();
+  unsigned int lost = 0;
+  for (unsigned int i = 0; i < n; i++) {
+    os_write("U", 1);
+    if (os_getc() != 'U')
+      lost++;
+  }
+  unsigned long long dt = rdtime() - t0;
+  os_console_raw(0);
+  puts_("\nuart: ");
+  putu(n);
+  puts_(" round trips in ");
+  putu(dt * 1000000ull / TIMEBASE_HZ);
+  puts_(" us, ");
+  putu(n ? dt * 1000000ull / TIMEBASE_HZ / n : 0);
+  puts_(" us each");
+  if (lost) {
+    puts_(", ");
+    putu(lost);
+    puts_(" wrong bytes");
+  }
+  puts_("\n");
+}
+
 /* Sleep 1 ms n times; the time beyond 1 ms per sleep is the timer
    interrupt and wake-up latency (plus the system calls). */
 static void bench_sleep(unsigned int n)
@@ -150,7 +182,7 @@ static void run(char *line)
   if (!*line)
     return;
   if (streq(line, "help"))
-    puts_("commands: help, echo TEXT, uptime, bench syscall [N], bench memcpy [KB], bench sleep [N], bench dhrystone\n");
+    puts_("commands: help, echo TEXT, uptime, bench syscall [N], bench memcpy [KB], bench sleep [N], bench dhrystone, bench uart [N]\n");
   else if (streq(line, "echo")) {
     puts_(rest);
     puts_("\n");
@@ -167,8 +199,10 @@ static void run(char *line)
       bench_sleep(atou(arg, 10));
     else if (streq(rest, "dhrystone"))
       dhrystone_main(0, 0);
+    else if (streq(rest, "uart"))
+      bench_uart(atou(arg, 100));
     else
-      puts_("bench: syscall [N] | memcpy [KB] | sleep [N] | dhrystone\n");
+      puts_("bench: syscall [N] | memcpy [KB] | sleep [N] | dhrystone | uart [N]\n");
   } else {
     puts_(line);
     puts_(": unknown command (try help)\n");

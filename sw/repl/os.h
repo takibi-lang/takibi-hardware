@@ -12,6 +12,9 @@ void os_write(const char *s, unsigned int n);
 void os_null_syscall(void);
 /* Sleep for at least us microseconds (the timer-latency benchmark). */
 void os_sleep_us(unsigned int us);
+/* Console in raw mode (no line editing, no echo) while on != 0, for the
+   UART round-trip benchmark. */
+void os_console_raw(int on);
 /* Name of the OS, for the banner. */
 const char *os_name(void);
 /* Stop (never returns). */
