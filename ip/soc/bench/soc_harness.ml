@@ -31,12 +31,13 @@ type result =
 let clock_hz = 50_000_000
 let baud = 5_000_000 (* fast: 10 cycles per bit, for simulation *)
 
-let config ~boot_rom =
+let config ?(harts = 1) ~boot_rom () =
   { Top.Config.clock_hz
   ; baud
   ; boot_rom
   ; sdram = Sdram.Sdram_ctrl.Config.create ~clock_mhz:50 ()
   ; tlb_entries = 8
+  ; harts
   }
 ;;
 
@@ -92,7 +93,7 @@ let run
   let sim =
     match sim with
     | Some sim -> sim
-    | None -> Sim.create (Top.create (config ~boot_rom) (Scope.create ~flatten_design:true ()))
+    | None -> Sim.create (Top.create (config ~boot_rom ()) (Scope.create ~flatten_design:true ()))
   in
   let i = Cyclesim.inputs sim in
   let pins = Cyclesim.outputs sim

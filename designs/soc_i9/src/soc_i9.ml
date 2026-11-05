@@ -40,6 +40,10 @@ let capture_rising = is_experiment "sdram-rise"
 let late = is_experiment "sdram-late"
 let clock_in_phase = is_experiment "sdram-clk"
 
+(* HARTS=2 (environment, at generation time): two cores (#9); the boot
+   ROM, device tree and kernel must be the two-hart ones. *)
+let harts = Option.value_map (Sys.getenv "HARTS") ~default:1 ~f:Int.of_string
+
 let config ~boot_rom =
   { Soc.Soc_top.Config.clock_hz
   ; baud
@@ -51,6 +55,7 @@ let config ~boot_rom =
         ~read_latency:(if late then 3 else 2)
         ()
   ; tlb_entries = 8
+  ; harts
   }
 ;;
 

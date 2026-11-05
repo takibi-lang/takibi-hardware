@@ -38,3 +38,6 @@ _opam/
 # FPGA build outputs
 build/
 build-*/
+
+# SymbiYosys work directories
+formal/arbiter_*/

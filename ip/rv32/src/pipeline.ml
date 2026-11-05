@@ -733,6 +733,9 @@ let create ?(reset_pc = 0) ~base scope (i : _ I.t) =
     ; csr_mcycle = mcycle.value
     ; csr_minstret = minstret.value
     ; fetch = decision.value
+    ; mem_sc = gnd
+    ; mem_lock = gnd
+    ; reservation_lost = gnd
     }
   in
   { O.core; imem_addr = fetch_pc; imem_read = request }

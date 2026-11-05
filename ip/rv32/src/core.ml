@@ -112,6 +112,9 @@ module I = struct
     ; seip : 'a (* supervisor external interrupt (PLIC); [~s] only *)
     ; mtime : 'a [@bits 64]
       (* CLINT mtime: time/timeh and Sstc; [~s] only ("time" is a Verilog keyword) *)
+    ; snoop_valid : 'a (* another core's write, as the bus grants it (#9) *)
+    ; snoop_addr : 'a [@bits 32] (* its physical address *)
+    ; sc_block : 'a (* another core has a write the bus has not granted yet *)
     }
   [@@deriving hardcaml]
 end
@@ -141,6 +144,9 @@ module O = struct
     ; csr_mcycle : 'a [@bits 64] (* the counters, for the lockstep bench *)
     ; csr_minstret : 'a [@bits 64]
     ; fetch : 'a (* in Fetch, where interrupts are taken (bench only) *)
+    ; mem_sc : 'a (* the write is an SC (the SoC's arbiter grants it first) *)
+    ; mem_lock : 'a (* the read is an AMO's: keep the bus until its write *)
+    ; reservation_lost : 'a (* a snooped write ended the reservation (bench) *)
     }
   [@@deriving hardcaml]
 end
@@ -725,7 +731,24 @@ let create
   (* A: the reservation and the AMO result. *)
   let%hw_var reservation_valid = Always.Variable.reg ~width:1 spec in
   let%hw_var reservation_addr = Always.Variable.reg ~width:32 spec in
-  let%hw sc_ok = reservation_valid.value &: (reservation_addr.value ==: daddr) in
+  (* Several cores (#9): the reservation also holds the physical address,
+     and another core's write to that word (snooped when the bus grants
+     it) ends it. An SC decides only while no other core has an ungranted
+     write ([sc_block]), and the SoC grants an SC's write before others, so
+     no write can come between the decision and the SC's own write. *)
+  let%hw_var reservation_pa = Always.Variable.reg ~width:32 spec in
+  let%hw reservation_kill =
+    if ext_a
+    then
+      i.snoop_valid
+      &: reservation_valid.value
+      &: (i.snoop_addr.:[31, 2] ==: reservation_pa.value.:[31, 2])
+    else gnd
+  in
+  let%hw_var lr_set = Always.Variable.wire ~default:gnd in
+  let%hw sc_ok =
+    reservation_valid.value &: (reservation_addr.value ==: daddr) &: ~:reservation_kill
+  in
   let%hw_var amo_old = Always.Variable.reg ~width:32 spec in
   let%hw amo_new =
     if ext_a
@@ -908,22 +931,33 @@ let create
               (dec.load |: dec.lr)
               [ mem_read <-- vdd
               ; load_offset <-- lane
-              ; when_ dec.lr [ reservation_valid <-- vdd; reservation_addr <-- daddr ]
+              ; when_
+                  dec.lr
+                  [ reservation_valid <-- vdd
+                  ; reservation_addr <-- daddr
+                  ; reservation_pa <-- data_pa
+                  ; lr_set <-- vdd
+                  ]
               ; sm.set_next Load
               ]
-              [ when_ (dec.store |: (dec.sc &: sc_ok)) [ mem_write <-- vdd ]
-              ; when_ dec.sc [ reservation_valid <-- gnd ]
-              ; if_
-                  dec.amo
-                  [ mem_read <-- vdd; sm.set_next Amo ]
-                  (complete ~result:(uresize ~:sc_ok 32) ~next:pc_plus4)
+              [ if_
+                  (dec.sc &: i.sc_block)
+                  [ (* wait until the other cores' writes are granted *) ]
+                  [ when_ (dec.store |: (dec.sc &: sc_ok)) [ mem_write <-- vdd ]
+                  ; when_ dec.sc [ reservation_valid <-- gnd ]
+                  ; if_
+                      dec.amo
+                      [ mem_read <-- vdd; sm.set_next Amo ]
+                      (complete ~result:(uresize ~:sc_ok 32) ~next:pc_plus4)
+                  ]
               ]
           ]
       ]
   in
   Always.(
     compile
-      [ (if zicsr
+      [ when_ reservation_kill [ reservation_valid <-- gnd ]
+      ; (if zicsr
          then
            proc
              [ mcycle <-- mcycle.value +:. 1
@@ -1147,8 +1181,9 @@ let create
           [ retire <-- gnd
           ; rf_we <-- gnd
           ; pc <-- pc.value
-          ; reservation_valid <-- reservation_valid.value
+          ; reservation_valid <-- (reservation_valid.value &: ~:reservation_kill)
           ; reservation_addr <-- reservation_addr.value
+          ; reservation_pa <-- reservation_pa.value
           ; sm.set_next Execute
           ]
       ]);
@@ -1194,6 +1229,9 @@ let create
   ; csr_mcycle = mcycle.value
   ; csr_minstret = minstret.value
   ; fetch = sm.is Fetch |: overlapping.value
+  ; mem_sc = mem_write.value &: dec.sc &: (sm.is Execute |: sm.is Mem)
+  ; mem_lock = mem_read.value &: dec.amo &: (sm.is Execute |: sm.is Mem)
+  ; reservation_lost = reservation_kill &: ~:(lr_set.value)
   }
 ;;
 

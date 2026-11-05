@@ -74,6 +74,7 @@ or from the golden model), as done in `rv32_model/test`.
 | Stage | What | Command | Runs |
 |-------|------|---------|------|
 | S0 | OCaml type check, HardCaml elaboration checks; SAT equivalence proofs (`Hardcaml_verify.Sec` + z3) | `dune build`, `make test` | every change |
+| S0f | Formal proofs of temporal properties with SymbiYosys (sby: BMC, k-induction, cover) on the generated Verilog; properties in hand-written SystemVerilog next to the .sby files (formal/) | `make formal` | every change |
 | S1 | Cyclesim expect tests; OCaml golden model | `make test` | every change |
 | S1 | also: riscv-arch-test RV32I (independent reference signatures) on the plain and the i9 core, lockstep; Cyclesim like the rest of S1, but a separate command because it fetches the tests | `make arch-test` | in CI |
 | S2 | the same benches on Verilator | `make verilate` | before pushing; in CI |

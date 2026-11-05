@@ -1,0 +1,3 @@
+(executable
+ (name arbiter_verilog)
+ (libraries soc hardcaml stdio))

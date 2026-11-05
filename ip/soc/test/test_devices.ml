@@ -32,8 +32,9 @@ let clint ?(model_k = 3) () =
     (match !pending_read with
      | Some v when v <> Bits.to_int !(o.rdata) -> Int.incr mismatches
      | _ -> ());
-    if Bool.(Bits.to_bool !(o.mtip) <> D.Clint.mtip model) then Int.incr mismatches;
-    if Bits.to_bool !(o.mtip) then mtip_seen := true;
+    let mtip0 = Bits.to_int !(o.mtip) land 1 = 1 in
+    if Bool.(mtip0 <> D.Clint.mtip model) then Int.incr mismatches;
+    if mtip0 then mtip_seen := true;
     let offs = [| 0x0; 0x4000; 0x4004; 0xbff8; 0xbffc |] in
     let off = offs.(Random.State.int rng 5) in
     let op = Random.State.int rng 8 in

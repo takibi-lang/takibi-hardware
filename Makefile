@@ -47,7 +47,7 @@ I9_TTY ?= $(firstword $(wildcard /dev-host/serial/by-id/usb-ARM_DAPLink*-if01) /
 
 BOARD_PROJECTS := designs/blink designs/hello designs/mcu designs/mcu_i9
 
-all: setup langcheck selftest test board-sim netlist-sim synth names
+all: setup langcheck selftest test formal board-sim netlist-sim synth names
 
 setup:
 	@scripts/setup_clone.sh
@@ -136,6 +136,10 @@ soc-i9-flash: soc-i9
 soc-i9-prog: soc-i9
 	$(MAKE) -C designs/soc_i9 prog
 
+# Formal proofs with SymbiYosys on the generated Verilog (formal/, S0f).
+formal:
+	$(MAKE) --no-print-directory -C formal
+
 # JTAG from the fabric (#10): load designs/jtag_i9, then drscan ER1.
 jtag-test:
 	$(MAKE) -C designs/jtag_i9 prog jtag-test
@@ -168,4 +172,4 @@ clean:
 	dune clean
 	@for p in $(BOARD_PROJECTS); do $(MAKE) --no-print-directory -C $$p clean; done
 
-.PHONY: jtag-test soc-i9 soc-i9-images soc-i9-sim soc-i9-flash soc-i9-prog versions arch-test riscv-tests linux-model board-sim board-sim-i9 netlist-sim netlist-sim-i9 mcu mcu-prog mcu-term i9 i9-prog i9-term ecpbram-check icebram-check all setup langcheck selftest test verilate synth names ci clean
+.PHONY: formal jtag-test soc-i9 soc-i9-images soc-i9-sim soc-i9-flash soc-i9-prog versions arch-test riscv-tests linux-model board-sim board-sim-i9 netlist-sim netlist-sim-i9 mcu mcu-prog mcu-term i9 i9-prog i9-term ecpbram-check icebram-check all setup langcheck selftest test verilate synth names ci clean

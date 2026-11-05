@@ -67,7 +67,7 @@ let () =
         V.create
           ~verilator_config:Testlib.Verilator_config.config
           ~clock_names:[ "clock" ]
-          (Top.create (H.config ~boot_rom) (Hardcaml.Scope.create ~flatten_design:true ()))
+          (Top.create (H.config ~boot_rom ()) (Hardcaml.Scope.create ~flatten_design:true ()))
       in
       eprintf "[sim] Verilator model built in %.0f s\n%!" (Unix.gettimeofday () -. t0);
       Some sim)

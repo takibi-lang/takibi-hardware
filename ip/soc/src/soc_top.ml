@@ -27,6 +27,7 @@ module Config = struct
     ; boot_rom : int array (* words *)
     ; sdram : Sdram.Sdram_ctrl.Config.t
     ; tlb_entries : int
+    ; harts : int (* 1 or 2 (#9) *)
     }
 end
 
@@ -54,7 +55,9 @@ module O = struct
     ; sdram_dq_oe : 'a
     ; sdram_ready : 'a (* initialisation done *)
     ; core : 'a Rv32.Core.O.t [@rtlprefix "core_"]
+    ; core1 : 'a Rv32.Core.O.t [@rtlprefix "core1_"] (* hart 1 (zeros with one) *)
     ; irq : 'a [@bits 4] (* MSIP, MTIP, MEIP, SEIP: the core's, for benches *)
+    ; irq1 : 'a [@bits 4]
     ; mtime : 'a [@bits 64]
     }
   [@@deriving hardcaml]
@@ -72,51 +75,111 @@ end
 let create (c : Config.t) scope (i : _ I.t) =
   let ( -- ) = Scope.naming scope in
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
-  let mem_ready = wire 1
-  and mem_rvalid = wire 1
-  and mem_rdata = wire 32
-  and irq = wire 3
-  and seip = wire 1
-  and mtime = wire 64 in
-  let core =
-    Rv32.Core.hierarchical
-      ~s:true
-      ~m:true
-      ~a:true
-      ~zifencei:true
-      ~dual_read:true
-      ~fetch_overlap:true
-      ~tlb_entries:c.tlb_entries
-      ~barrel_shift:true
-      ~base:Rv32i
+  let harts = c.harts in
+  assert (harts >= 1 && harts <= 2);
+  let sfx h n = if h = 0 then n else Printf.sprintf "%s%d" n h in
+  let mem_rdata = wire 32
+  and mtime = wire 64
+  and snoop_addr = wire 32 in
+  let per_hart () = Array.init harts ~f:(fun _ -> wire 1) in
+  let mem_ready = per_hart ()
+  and mem_rvalid = per_hart ()
+  and seip = per_hart ()
+  and snoop_valid = per_hart ()
+  and sc_block = per_hart () in
+  let irq = Array.init harts ~f:(fun _ -> wire 3) in
+  let cores =
+    Array.init harts ~f:(fun h ->
+      Rv32.Core.hierarchical
+        ~s:true
+        ~m:true
+        ~a:true
+        ~zifencei:true
+        ~dual_read:true
+        ~fetch_overlap:true
+        ~tlb_entries:c.tlb_entries
+        ~barrel_shift:true
+        ~base:Rv32i
+        scope
+        { Rv32.Core.I.clock = i.clock
+        ; clear = i.clear
+        ; mem_rdata
+        ; mem_ready = mem_ready.(h)
+        ; mem_rvalid = mem_rvalid.(h)
+        ; irq = irq.(h)
+        ; seip = seip.(h)
+        ; mtime
+        ; snoop_valid = snoop_valid.(h)
+        ; snoop_addr
+        ; sc_block = sc_block.(h)
+        })
+  in
+  (* Bus bridges, one per core: the core's request is registered before it
+     reaches the arbiter and the targets, and the core's ready only says
+     whether its register is free. This cuts the combinational path core
+     address -> decode -> target ready -> core state (34 MHz without it).
+     One more cycle per access. The payload is captured whenever the
+     register is free (no fan-out of the request decision onto ~100
+     enables); req_valid says if it is a request. *)
+  let granted = per_hart () in
+  let bridges =
+    Array.mapi cores ~f:(fun h core ->
+      let valid =
+        reg_fb spec ~width:1 ~f:(fun v ->
+          mux2 v (mux2 granted.(h) gnd vdd) (core.mem_read |: core.mem_write))
+        -- sfx h "req_valid"
+      in
+      let take = ~:valid in
+      let r name x = reg spec ~enable:take x -- sfx h name in
+      ( valid
+      , r "req_write" core.mem_write
+      , r "req_addr" core.mem_addr
+      , r "req_wdata" core.mem_wdata
+      , r "req_wmask" core.mem_wmask
+      , r "req_sc" core.mem_sc
+      , r "req_lock" core.mem_lock ))
+  in
+  let b_valid h = let v, _, _, _, _, _, _ = bridges.(h) in v
+  and b_write h = let _, w, _, _, _, _, _ = bridges.(h) in w
+  and b_sc h = let _, _, _, _, _, s, _ = bridges.(h) in s
+  in
+  (* Arbiter (#9, Arbiter: proved in formal/arbiter.sby) *)
+  let bit2 f = (if harts > 1 then f 1 else gnd) @: f 0 in
+  let arb_ready = wire 1
+  and arb_rvalid = wire 1 in
+  let arb =
+    Arbiter.hierarchical
       scope
-      { Rv32.Core.I.clock = i.clock
+      { Arbiter.I.clock = i.clock
       ; clear = i.clear
-      ; mem_rdata
-      ; mem_ready
-      ; mem_rvalid
-      ; irq
-      ; seip
-      ; mtime
+      ; valid = bit2 b_valid
+      ; write = bit2 b_write
+      ; sc = bit2 b_sc
+      ; lock = bit2 (fun h -> let _, _, _, _, _, _, l = bridges.(h) in l)
+      ; core_sc = bit2 (fun h -> cores.(h).mem_sc)
+      ; ready = arb_ready
+      ; rvalid = arb_rvalid
       }
   in
-  (* Bus bridge: the core's request is registered before it reaches the
-     targets, and the core's ready only says whether the register is free.
-     This cuts the combinational path core address -> decode -> target
-     ready -> core state (34 MHz without it). One more cycle per access. *)
-  let bridge_ready = wire 1 in
-  let%hw req_valid =
-    reg_fb spec ~width:1 ~f:(fun v ->
-      mux2 v (mux2 bridge_ready gnd vdd) (core.mem_read |: core.mem_write))
+  let sel = arb.sel
+  and sel_valid = arb.sel_valid in
+  let pick f = if harts = 1 then f 0 else mux2 sel (f 1) (f 0) in
+  let field k h =
+    let v, w, a, d, m, s, l = bridges.(h) in
+    match k with
+    | `Write -> w
+    | `Addr -> a
+    | `Wdata -> d
+    | `Wmask -> m
+    | `Sc -> s
+    | `Lock -> l
+    | `Valid -> v
   in
-  (* the payload is captured whenever the register is free (no fan-out of
-     the request decision onto ~100 enables); req_valid says if it is a
-     request *)
-  let take = ~:req_valid in
-  let%hw req_write = reg spec ~enable:take core.mem_write in
-  let%hw req_addr = reg spec ~enable:take core.mem_addr in
-  let%hw req_wdata = reg spec ~enable:take core.mem_wdata in
-  let%hw req_wmask = reg spec ~enable:take core.mem_wmask in
+  let req_write = pick (field `Write) -- "req_write_sel" in
+  let req_addr = pick (field `Addr) -- "req_addr_sel" in
+  let req_wdata = pick (field `Wdata) in
+  let req_wmask = pick (field `Wmask) in
+  let req_valid = sel_valid in
   let addr = req_addr in
   let target =
     mux2
@@ -162,7 +225,7 @@ let create (c : Config.t) scope (i : _ I.t) =
   in
   (* Register-bus devices *)
   let clint =
-    Clint.hierarchical ~cycles_per_tick:(c.clock_hz / 1_000_000) scope (bus Target.clint)
+    Clint.hierarchical ~harts ~cycles_per_tick:(c.clock_hz / 1_000_000) scope (bus Target.clint)
   in
   let uart =
     Uart16550.hierarchical
@@ -171,7 +234,7 @@ let create (c : Config.t) scope (i : _ I.t) =
       (bus Target.uart)
       ~rx:i.uart_rx
   in
-  let plic = Plic.create ~sources:1 scope (bus Target.plic) uart.irq in
+  let plic = Plic.create ~contexts:(2 * harts) ~sources:1 scope (bus Target.plic) uart.irq in
   (* Flash window and SDRAM *)
   let flash =
     Spi_flash.Flash_window.hierarchical
@@ -223,24 +286,38 @@ let create (c : Config.t) scope (i : _ I.t) =
   let ready =
     mux2 (is Target.sdram) cache.ready (mux2 (is Target.flash) flash.ready vdd) -- "bus_ready"
   in
-  bridge_ready <== ready;
-  mem_ready <== ~:req_valid;
-  let accepted_read = read &: ready in
+  arb_ready <== ready;
+  Array.iteri granted ~f:(fun h g -> g <== arb.granted.:(h));
+  Array.iteri mem_ready ~f:(fun h w -> w <== ~:(b_valid h));
+  let accepted_read = req_valid &: ready &: ~:req_write in
   let owner = reg spec ~enable:accepted_read target -- "read_owner" in
+  let owner_hart = reg spec ~enable:accepted_read sel -- "read_owner_hart" in
   let device_read =
     accepted_read &: ~:(is Target.sdram) &: ~:(is Target.flash)
   in
   let device_rvalid = reg spec device_read -- "device_rvalid" in
   let owner_is t = owner ==:. t in
-  mem_rvalid
-  <== (device_rvalid |: (owner_is Target.flash &: flash.rvalid) |: (owner_is Target.sdram &: cache.rvalid));
+  let rvalid =
+    (device_rvalid |: (owner_is Target.flash &: flash.rvalid) |: (owner_is Target.sdram &: cache.rvalid))
+    -- "bus_rvalid"
+  in
+  arb_rvalid <== rvalid;
+  Array.iteri mem_rvalid ~f:(fun h w -> w <== (rvalid &: (owner_hart ==:. h)));
+  snoop_addr <== req_addr;
+  Array.iteri snoop_valid ~f:(fun h w -> w <== arb.snoop.:(h));
+  Array.iteri sc_block ~f:(fun h w -> w <== if h = 0 then arb.sc_block0 else arb.sc_block1);
   mem_rdata
   <== mux
         owner
         [ rom_data; clint.rdata; plic.rdata; uart.rdata; flash.rdata; cache.rdata; zero 32; zero 32 ];
-  irq <== (plic.irq.:(0) @: clint.mtip @: clint.msip);
-  seip <== plic.irq.:(1);
+  Array.iteri irq ~f:(fun h w ->
+    w <== (plic.irq.:(2 * h) @: clint.mtip.:(h) @: clint.msip.:(h)));
+  Array.iteri seip ~f:(fun h w -> w <== plic.irq.:((2 * h) + 1));
   mtime <== clint.mtime;
+  let hart_irq h = if h < harts then seip.(h) @: irq.(h) else zero 4 in
+  let core1 =
+    if harts > 1 then cores.(1) else Rv32.Core.O.map Rv32.Core.O.port_widths ~f:(fun w -> zero w)
+  in
   { O.uart_tx = uart.tx
   ; flash_cs_n = flash.cs_n
   ; flash_sck = flash.sck
@@ -251,8 +328,10 @@ let create (c : Config.t) scope (i : _ I.t) =
   ; sdram_dq_out = sdram.dq_out
   ; sdram_dq_oe = sdram.dq_oe
   ; sdram_ready = sdram.init_done
-  ; core
-  ; irq = seip @: irq
+  ; core = cores.(0)
+  ; core1
+  ; irq = hart_irq 0
+  ; irq1 = hart_irq 1
   ; mtime
   }
 ;;

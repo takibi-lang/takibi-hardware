@@ -14,6 +14,7 @@ category, because they cost iterations just the same.
 | Stage | Tool | Typical cost |
 |-------|------|--------------|
 | S0 | OCaml type check and HardCaml elaboration (width mismatch, combinational loop, undriven wire) | seconds |
+| S0f | Formal proofs with SymbiYosys on the generated Verilog (`make formal`): bounded model checking and k-induction of properties written next to it | seconds |
 | S1 | Cyclesim expect tests, OCaml golden model (`make test`) | seconds |
 | S2 | Same benches on Verilator (`make verilate`) | tens of seconds |
 | S2b | The generated board Verilog with firmware, four-state, pin-level UART, Icarus (`make board-sim`) | seconds to minutes |
@@ -72,7 +73,8 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 
 | Found at | Count |
 |----------|-------|
-| S0 | 1 |
+| S0 | 2 |
+| S0f | 1 |
 | S1 | 23 |
 | S2 | 2 (board-sim) |
 | S3 | 8 |
@@ -84,6 +86,41 @@ No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0049: combinational loop through the arbiter's two-bit sc_block
+
+- Date: 2026-11-05
+- Project: ip/soc (Arbiter, #9)
+- Found at: S0 (HardCaml: "Combinational loop" when the SoC test built
+  the simulation); Catchable at: S0
+- Class: logic
+- Symptom: the one-core SoC no longer elaborated.
+- Cause: sc_block was one 2-bit output; core 1's bit depends on core 0's
+  mem_sc, and core 0 took its bit out of the same concatenation, so the
+  graph had core 0's mem_sc -> sc_block -> core 0's sc_block -> mem_sc.
+  No bit-level loop exists, but HardCaml checks node-level dependencies.
+- Fix: one output per core.
+- Regression: every SoC test elaborates the arbiter.
+
+### B-0048: an SC could decide while the other core's AMO held the bus
+
+- Date: 2026-11-05
+- Project: ip/soc (Arbiter, dual core, #9)
+- Found at: S0f (sby, bounded model checking: a 3-cycle counterexample
+  before the two-core SoC had ever been simulated); Catchable at: S0f
+- Class: logic
+- Symptom: core 0's AMO read is granted and locks the bus; in the same
+  cycle core 1 decides that its SC succeeds (core 0's bridge holds a read,
+  not a write, so nothing blocks it); after the read data, the lock lets
+  core 0's AMO write go first. On the same word the SC's atomicity is
+  broken (a lost update).
+- Cause: sc_block only looked at the other core's ungranted writes, not
+  at its AMO read or the lock it holds.
+- Fix: an SC also waits while the other core has an ungranted AMO read or
+  holds the lock.
+- Regression: formal/arbiter.sby proves (k-induction) that no write of the
+  other core is granted between an SC's decision and its write; `make
+  formal` also checks that the old rule (EXPERIMENT=arbiter-b0048) fails.
 
 ### B-0047: pipeline fetch kept a stale instruction after two redirects
 

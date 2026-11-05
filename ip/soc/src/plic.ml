@@ -5,7 +5,8 @@
    thresholds are 3 bits. A source is pending while its level is high and
    it is not in service; a claim (read) takes the highest-priority enabled
    pending source above the threshold (lowest number on a tie) into
-   service, a complete (write of its number) ends the service. Register
+   service, a complete (write of its number) ends the service. [contexts]
+   (default 2, up to 8 for 4 harts: #9). Register
    for register as Soc_model.Devices.Plic. *)
 open! Base
 open! Hardcaml
@@ -14,13 +15,13 @@ open Signal
 module O = struct
   type 'a t =
     { rdata : 'a [@bits 32]
-    ; irq : 'a [@bits 2] (* per context *)
+    ; irq : 'a [@bits 8] (* per context: 2h M, 2h + 1 S of hart h *)
     }
   [@@deriving hardcaml]
 end
 
-let create ~sources scope (i : _ Regbus.I.t) (level : Signal.t) =
-  let contexts = 2 in
+let create ?(contexts = 2) ~sources scope (i : _ Regbus.I.t) (level : Signal.t) =
+  assert (contexts <= 8);
   let ( -- ) = Scope.naming scope in
   let spec = Reg_spec.create ~clock:i.clock ~clear:i.clear () in
   let reg name w =
@@ -117,6 +118,6 @@ let create ~sources scope (i : _ Regbus.I.t) (level : Signal.t) =
            (i.write &: in_ctx_region &: (ctx_of_claim ==:. c) &: (sub ==:. 0))
            [ threshold.(c) <-- i.wdata.:[2, 0] ])));
   { O.rdata = rdata.value
-  ; irq = concat_lsb (Array.to_list (Array.map bests ~f:(fun (v, _, _) -> v)))
+  ; irq = uresize (concat_lsb (Array.to_list (Array.map bests ~f:(fun (v, _, _) -> v)))) 8
   }
 ;;

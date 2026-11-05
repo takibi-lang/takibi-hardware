@@ -1,0 +1,23 @@
+# The SoC's bus arbiter (#9): LR/SC and AMO atomicity, one transaction at a
+# time. `make formal` generates build/arbiter.v from HardCaml first.
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+prove: depth 20
+cover: mode cover
+cover: depth 20
+
+[engines]
+smtbmc yices
+
+[script]
+read_verilog arbiter.v
+read_verilog -formal arbiter_props.sv
+prep -top arbiter_props
+
+[files]
+build/arbiter.v
+arbiter_props.sv

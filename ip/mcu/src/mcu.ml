@@ -134,6 +134,9 @@ let create (config : Config.t) scope (i : _ I.t) =
       ; irq
       ; seip = gnd
       ; mtime = zero 64
+      ; snoop_valid = gnd
+      ; snoop_addr = zero 32
+      ; sc_block = gnd
       }
       , None ))
   in
