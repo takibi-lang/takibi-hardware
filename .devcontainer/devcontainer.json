@@ -19,7 +19,7 @@
     "source=${localEnv:HOME}/claude/per-clone/${localWorkspaceFolderBasename}/dot.claude.json,target=/home/vscode/.claude.json,type=bind",
     "source=${localEnv:HOME}/opencode/dot.share,target=/home/vscode/.local/share/opencode,type=bind",
     "source=${localEnv:HOME}/opencode/dot.state,target=/home/vscode/.local/state/opencode,type=bind",
-    "source=${localEnv:HOME}/github/dot.config-gh-master-q,target=/home/vscode/.config/gh,type=bind",
+    "source=${localEnv:HOME}/github/dot.config-gh,target=/home/vscode/.config/gh,type=bind",
     "source=${localEnv:HOME}/takibi-hardware,target=/home/vscode/.takibi-hardware,type=bind"
   ],
   "runArgs": [
