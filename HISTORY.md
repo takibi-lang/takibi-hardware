@@ -36,6 +36,14 @@ done, what was learned, and the numbers measured that day.
   memory instructions with S-mode, registered PTEs). 7432 TRELLIS_COMB,
   1 DP16KD (boot ROM). The flash image (bitstream, DTB, kernel) is one
   file written by `make soc-i9-flash`.
+- Board (S4): the memtest boot ROM passed 8 MiB SDRAM passes with the
+  default I/O timing (inverted SDRAM clock, CAS latency 2, falling-edge
+  capture) and read the factory data in the flash correctly. With the
+  flash image written (`--unprotect-flash` needed: the flash came
+  block-protected; the original contents were dumped first), **Linux 6.18
+  boots on the board to the REPL** and answers help/echo/uptime/bench:
+  `bench syscall 1000` 73 ms (73 us per call), `bench memcpy 64` 64 ms,
+  without caches. No defect was found first on the board.
 - Testing: most defects of the day were found at S1 (models, lockstep,
   riscv-tests); S3 found the Fmax and naming problems; Verilog generation
   found a port named `time` (B-0031, now an S1 test).

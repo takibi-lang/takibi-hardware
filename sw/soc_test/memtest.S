@@ -3,7 +3,7 @@
    SRAM. Prints on the UART:
 
      memtest
-     flash: <first word of the flash window>
+     flash: <words at 0, 0xa0000, the DTB and the kernel's magic>
      pass N: E errors [first bad address, read, expected]
 
    Each pass writes the whole 8 MiB of SDRAM with a pattern derived from
@@ -19,7 +19,25 @@ _start:
     call  puts
     la    a0, flash_msg
     call  puts
-    li    t0, FLASH_BASE
+    li    s7, FLASH_BASE
+    lw    a0, 0(s7)
+    call  puthex
+    li    a0, ' '
+    call  putc
+    li    t0, 0xa0000             /* the factory data on the i9 */
+    add   t0, s7, t0
+    lw    a0, 0(t0)
+    call  puthex
+    li    a0, ' '
+    call  putc
+    li    t0, FLASH_DTB_OFFSET    /* d00dfeed once the DTB is written */
+    add   t0, s7, t0
+    lw    a0, 0(t0)
+    call  puthex
+    li    a0, ' '
+    call  putc
+    li    t0, FLASH_KERNEL_OFFSET + 0x30 /* "RISC" (52534943) */
+    add   t0, s7, t0
     lw    a0, 0(t0)
     call  puthex
     call  newline

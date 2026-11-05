@@ -20,7 +20,8 @@ project log.
 | [designs/blink](designs/blink/) | LED blinker | S1, S3 |
 | [designs/hello](designs/hello/) | Prints "Hello, iCEstick!" at 115200 baud | S1, S2, S3 |
 | [designs/mcu](designs/mcu/) | RV32E MCU on the iCEstick running C firmware (UART echo) | S1, S2, S3 |
-| [designs/mcu_i9](designs/mcu_i9/) | RV32I MCU on the Colorlight i9 (ECP5) running Dhrystone | S1, S3 |
+| [designs/mcu_i9](designs/mcu_i9/) | RV32I MCU on the Colorlight i9 (ECP5) running Dhrystone | S1, S3, S4 |
+| [designs/soc_i9](designs/soc_i9/) | Linux SoC (RV32IMA, S/U, Sv32, SDRAM, SPI flash, CLINT, PLIC, 16550) on the Colorlight i9: boots Linux 6.18 to a REPL | S1, S2 (Verilator boot), S3, S4 |
 | [ip/mcu](ip/mcu/) | The MCU (core + RAM + UART + LEDs + counters), shared by both boards | S1, S2 |
 | [bench/ref_cores](bench/ref_cores/) | Area and Dhrystone of reference cores ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)) | -- |
 | [models/rv32_model](models/rv32_model/) | RV32E golden model and assembler | tests |
@@ -53,14 +54,28 @@ re-run Yosys and nextpnr (about 16 s).
 ## Running the MCU on a Colorlight i9 v7.2
 
     make i9-prog   # build designs/mcu_i9 with sw/dhrystone_rv32i.bin, load it
-    make i9-term   # picocom -b 115200 /dev-host/ttyACM0 (override with I9_TTY=...)
+    make i9-term   # picocom -b 115200 on the DAPLink's serial port (override with I9_TTY=...)
 
 The UART goes through the ext board's DAPLink (USB CDC serial). The
 firmware runs Dhrystone (500 runs) and prints cycles and DMIPS; reset the
 board (or reload) to run it again. `make -C designs/mcu_i9 flash` writes
-the SPI flash instead of the FPGA's SRAM. Results so far are from
-simulation only; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md). First
-session: [docs/BRINGUP_I9.md](docs/BRINGUP_I9.md).
+the SPI flash instead of the FPGA's SRAM. On the board it prints 0.385
+DMIPS/MHz, as in simulation; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+First session: [docs/BRINGUP_I9.md](docs/BRINGUP_I9.md).
+
+## Linux on the Colorlight i9 (issue #21)
+
+    make soc-i9-images  # kernel 6.18 + the REPL (initramfs), boot ROM, device tree
+    make soc-i9-flash   # bitstream, device tree and kernel into the SPI flash
+    make i9-term        # the console: Linux boots to "takibi-hardware REPL on Linux"
+
+Writing the flash takes about 10 minutes over the DAPLink. The SoC runs at
+50 MHz from the 8 MiB SDRAM without caches (uptime, `bench syscall`,
+`bench memcpy` in the REPL). `make soc-i9-sim` boots the same images on
+the SoC RTL in Verilator with the board models, every instruction in
+lockstep with the golden model. Bring-up aid: `make -C designs/soc_i9
+BOOT=sw/soc_test/memtest.bin BUILD=build-memtest prog` (SDRAM and flash
+test from the boot ROM, no flash contents needed).
 
 ## Toolchain
 

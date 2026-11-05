@@ -69,7 +69,7 @@ $(BUILD)/flash.bin: $(BUILD)/top.bit $(LINUX)/boot/soc.dtb $(LINUX)/kernel/arch/
 	@ls -l $@
 
 flash: $(BUILD)/flash.bin
-	openFPGALoader -b colorlight-i9 -f $<
+	openFPGALoader -b colorlight-i9 --unprotect-flash -f $<
 
 clean:
 	rm -rf $(BUILD)
