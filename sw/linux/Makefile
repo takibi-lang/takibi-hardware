@@ -6,7 +6,7 @@
 ROOT := $(abspath ../..)
 OUT := $(ROOT)/build/linux
 BOOT := $(ROOT)/_build/default/models/soc_model/bin/boot.exe
-INPUT := help\recho hello from U-mode\rbench syscall 1000\rbench sleep 5\r
+INPUT := help\recho hello from U-mode\rbench syscall 1000\rbench sleep 5\rbench dhrystone\r
 
 all: model
 
@@ -23,10 +23,10 @@ images:
 model: images
 	cd $(ROOT) && dune build ./models/soc_model/bin/boot.exe
 	$(BOOT) $(OUT)/boot/boot.bin $(OUT)/boot/soc.dtb $(OUT)/kernel/arch/riscv/boot/Image \
-	  --input '$(INPUT)' --until 'us per sleep' --max 150000000 | tee $(OUT)/model.log
+	  --input '$(INPUT)' --until 'DMIPS/MHz' --max 200000000 | tee $(OUT)/model.log
 	@for l in 'Linux version 6' 'SBI specification v1.0 detected' 'is a 16550A' \
 	          'takibi-hardware REPL on Linux' 'commands: help' 'hello from U-mode' \
-	          'syscall: 1000 calls in' 'cycles, ' 'us per sleep'; do \
+	          'syscall: 1000 calls in' 'cycles, ' 'us per sleep' 'dhrystone: DMIPS/MHz'; do \
 	  grep -qF "$$l" $(OUT)/model.log || { echo "FAIL: missing '$$l'" >&2; exit 1; }; done
 	@echo "OK: Linux boots on the SoC model and the REPL answers"
 

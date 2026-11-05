@@ -10,7 +10,8 @@
    (CYCLES_PER_TICK); instruction counts are not available on Linux.
 
    Commands: help, echo TEXT, uptime, bench syscall [N], bench memcpy [KB],
-   bench sleep [N] (timer wake-up latency). */
+   bench sleep [N] (timer wake-up latency), bench dhrystone (on Linux:
+   dhrystone_linux.c). */
 #include "os.h"
 
 #define TIMEBASE_HZ 1000000u /* Soc_map.timebase_hz */
@@ -87,6 +88,8 @@ static void put_cycles(unsigned long long dt, unsigned int items)
   puts_(" per item)");
 }
 
+int dhrystone_main(int argc, char **argv);
+
 static unsigned char buffer[2][64 * 1024];
 
 static void bench_syscall(unsigned int n)
@@ -147,7 +150,7 @@ static void run(char *line)
   if (!*line)
     return;
   if (streq(line, "help"))
-    puts_("commands: help, echo TEXT, uptime, bench syscall [N], bench memcpy [KB], bench sleep [N]\n");
+    puts_("commands: help, echo TEXT, uptime, bench syscall [N], bench memcpy [KB], bench sleep [N], bench dhrystone\n");
   else if (streq(line, "echo")) {
     puts_(rest);
     puts_("\n");
@@ -162,8 +165,10 @@ static void run(char *line)
       bench_memcpy(atou(arg, 16));
     else if (streq(rest, "sleep"))
       bench_sleep(atou(arg, 10));
+    else if (streq(rest, "dhrystone"))
+      dhrystone_main(0, 0);
     else
-      puts_("bench: syscall [N] | memcpy [KB] | sleep [N]\n");
+      puts_("bench: syscall [N] | memcpy [KB] | sleep [N] | dhrystone\n");
   } else {
     puts_(line);
     puts_(": unknown command (try help)\n");

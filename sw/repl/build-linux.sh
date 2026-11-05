@@ -14,10 +14,12 @@ src=$home/src/linux-$version
 mkdir -p "$out"
 # The UAPI headers nolibc includes.
 make -s -C "$src" O="$kout" ARCH=riscv CROSS_COMPILE=riscv32-buildroot-linux-musl- headers_install
-riscv-none-elf-gcc -march=rv32ima_zicsr -mabi=ilp32 -Os -static -nostdlib -fno-stack-protector \
-  -ffreestanding -fno-builtin -Wall -Werror \
-  -include "$src/tools/include/nolibc/nolibc.h" -I "$src/tools/include/nolibc" -I "$kout/usr/include" \
-  -Wl,--no-warn-rwx-segments -o "$out/repl" \
-  "$root/sw/repl/repl.c" "$root/sw/repl/os_linux.c" -lgcc
+cc() { riscv-none-elf-gcc -march=rv32ima_zicsr -mabi=ilp32 -static -nostdlib -fno-stack-protector \
+  -ffreestanding -fno-builtin \
+  -include "$src/tools/include/nolibc/nolibc.h" -I "$src/tools/include/nolibc" -I "$kout/usr/include" "$@"; }
+# Dhrystone (old C, -O2 as for the bare-metal numbers), then the REPL.
+cc -O2 -std=gnu89 -w -c -o "$out/dhrystone_linux.o" "$root/sw/repl/dhrystone_linux.c"
+cc -Os -Wall -Werror -Wl,--no-warn-rwx-segments -o "$out/repl" \
+  "$root/sw/repl/repl.c" "$root/sw/repl/os_linux.c" "$out/dhrystone_linux.o" -lgcc
 sed "s|@REPL@|$out/repl|" "$root/sw/repl/initramfs.list" > "$out/initramfs.list"
 ls -l "$out/repl"
