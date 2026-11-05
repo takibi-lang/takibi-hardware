@@ -53,7 +53,8 @@ Icarus Verilog with a memory of the same latency as our block RAM
 | **rv32 (this repo, RV32I)** | 1-cycle read latency (BRAM) | **2562** | **0.222** | **4.25** |
 | rv32, Zicsr + dual register-file read (#4 step 1) | 1-cycle read latency (BRAM) | 1898 | 0.299 | 3.26 |
 | rv32, + fetch overlap (#4 step 2) | 1-cycle read latency (BRAM) | 1535 | 0.370 | 2.64 |
-| **rv32, i9 configuration (+ M and A, #5; rv32im binary)** | 1-cycle read latency (BRAM) | **1478** | **0.385** | **2.69** |
+| rv32, i9 configuration (+ M and A, #5; rv32im binary) | 1-cycle read latency (BRAM) | 1478 | 0.385 | 2.69 |
+| **rv32 pipeline (#4: IF, ID, EX, commit; rv32im binary)** | dual-port BRAM, 1-cycle | **916** | **0.621** | **1.67** |
 | PicoRV32 | 1-cycle read latency | 3317 | 0.172 | 5.50 |
 
 DMIPS/MHz = 1e6 / (cycles per run x 1757), rounded here; the firmware
@@ -98,3 +99,5 @@ cores with the pinned toolchain is still to do.
 |--------|--------|------:|---:|----------:|--------------:|
 | designs/mcu (RV32E, 4 KiB) | iCE40HX1K | 1059-1093 LC | | 10 / 16 | 45 MHz (12) |
 | designs/mcu_i9 (RV32I, 64 KiB) | ECP5 LFE5U-45F | 1491 / 43848 LUT slots | 340 | 32 / 108 DP16KD | 57 MHz (25) |
+| designs/mcu_i9, pipelined core (#4, 2026-11-05) | ECP5 LFE5U-45F | 4698 TRELLIS_COMB | | 32 / 108 DP16KD | 40.8 MHz (40): 24.8 DMIPS on the board |
+| designs/soc_i9 (Linux SoC, multi-cycle core, cache) | ECP5 LFE5U-45F | 8318 TRELLIS_COMB | | 18 / 108 DP16KD | 52.4 MHz (50): 0.203 DMIPS/MHz in Linux U-mode |

@@ -3,6 +3,30 @@
 A dated log of the project, newest entry first. Each entry records what was
 done, what was learned, and the numbers measured that day.
 
+## 2026-11-05 (2): the pipelined core (#4), DMIPS on the i9 (#23)
+
+- Rv32.Pipeline: IF, ID, EX, commit; branches predicted not taken
+  (resolved in EX, 2 bubbles); all side effects in the commit stage
+  (memory, CSRs, traps, interrupts taken there before an instruction
+  starts); register file in distributed RAM (asynchronous reads), C->ID
+  and C->EX forwarding, a load-use bubble (load data is not forwarded to
+  the ALU: timing). Machine mode, M, A, Zifencei; separate instruction and
+  data ports (true dual-port BRAM in the MCU).
+- Verification: random lockstep suites (ALU/branches/memory; CSRs, M, A,
+  traps and interrupts; with random wait states on both ports): 0
+  failures after B-0047 (stale fetch after two redirects, wait states
+  only). riscv-tests rv32ui/um/ua/mi on the pipeline: 71/71 (mcsr,
+  instret_overflow, breakpoint skipped: M-mode configuration, as the model).
+  MCU firmware (echo, Dhrystone, interrupts) and the ECP5 netlist stage
+  in lockstep.
+- i9 MCU now uses it: Dhrystone CPI 2.69 -> 1.67 (0.621 DMIPS/MHz on the
+  board). Fmax 54.5 -> 40.8 MHz (critical: commit-stage completion ->
+  EX/ID advance -> fetch queue), so the PLL runs at 40 MHz: 24.8 DMIPS
+  instead of 19.3 (+29%). 4698 TRELLIS_COMB (MAX_LC raised to 5000).
+- #23: the barrel shifter for the MCU (CPI 2.69 -> 2.67, +449 LUTs) is
+  off; the pipeline at 40 MHz is the better DMIPS trade-off. The Linux
+  SoC keeps the multi-cycle core (Sv32, S-mode) for now.
+
 ## 2026-11-05: Linux L2-L7 in hardware, the SoC on the i9 at 50 MHz (#21)
 
 - Board: the Colorlight i9 arrived; the MCU loads over the ext board's

@@ -73,17 +73,36 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | Found at | Count |
 |----------|-------|
 | S0 | 1 |
-| S1 | 22 |
+| S1 | 23 |
 | S2 | 2 (board-sim) |
 | S3 | 8 |
 | S4 | 4 |
 
 By class: testbench 19, toolchain 4, model 1, inference 1, resource 1,
-reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 1 more (B-0043), reset/init 1 more (B-0035), logic 2 more (B-0039, B-0041), io/pinout 2 (B-0044, B-0046).
+reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 1 more (B-0043), reset/init 1 more (B-0035), logic 3 more (B-0039, B-0041, B-0047), io/pinout 2 (B-0044, B-0046).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0047: pipeline fetch kept a stale instruction after two redirects
+
+- Date: 2026-11-05
+- Project: ip/rv32 (Pipeline, #4)
+- Found at: S1 (random lockstep with wait states: the core retired the
+  instruction after an interrupt entry instead of the handler's first);
+  Catchable at: S1
+- Class: logic
+- Symptom: 3 of 300 random programs with interrupts and random memory
+  latency; none with block-RAM timing.
+- Cause: fetches were tagged with a one-bit epoch that each redirect
+  toggled; an MRET and an interrupt redirected twice while one slow fetch
+  was outstanding, the epoch was back to its old value and the stale
+  instruction was accepted.
+- Fix: one outstanding fetch at a time, so a flag: a redirect marks the
+  outstanding fetch stale and its data is dropped.
+- Regression: test_pipeline.ml (random programs with interrupts and wait
+  states on both ports).
 
 ### B-0046: SDRAM read data sampled one cycle late on the board
 

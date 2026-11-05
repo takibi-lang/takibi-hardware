@@ -4,6 +4,8 @@
    later privilege and virtual-memory) behaviour.
 
      run.exe DIR...          on the golden model
+     run.exe --pipeline DIR...  on the pipelined core (#4, M-mode: p tests
+                             of rv32ui/um/ua/mi), in lockstep
      run.exe --core DIR...   on the core, memory with random wait states, (i9 configuration with M, A and
                              S/U modes), in lockstep with the model (#5,
                              #6; `p` and `v` tests) *)
@@ -54,9 +56,46 @@ let run_core dir name ~tohost =
 ;;
 
 let core = ref false
+let pipeline = ref false
+
+(* The pipelined core (#4, machine mode only): random wait states on both
+   ports. *)
+let run_pipeline dir name ~tohost =
+  let r =
+    Rv32_bench.Pipe_harness.run
+      ~base:Rv32i
+      ~mem_base:0x8000_0000
+      ~mem_bytes
+      ~max_cycles:5_000_000
+      ~stop_on_write:tohost
+      ~wait_states:(Random.State.make [| String.hash name |])
+      (words_of_file (dir ^ "/" ^ name ^ ".bin"))
+  in
+  let result =
+    match r.mismatch, r.stop_value with
+    | Some m, _ -> Error ("lockstep: " ^ m)
+    | None, Some 1 -> Ok ()
+    | None, Some v -> Error (Printf.sprintf "test case %d failed" (v lsr 1))
+    | None, None ->
+      Error
+        (Printf.sprintf
+           "did not finish (trap %s)"
+           (Option.value_map r.trap ~default:"none" ~f:Int.to_string))
+  in
+  r.retired, result
+;;
 
 (* Tests the core cannot run yet, with the reason (printed as SKIP). *)
 let core_skips : (string * string) list = []
+
+(* The pipelined core implements the machine-mode configuration of Core
+   without S (as the golden model does there, so these fail in lockstep
+   agreement): misa reads 0, counter writes are ignored, no triggers. *)
+let pipeline_skips =
+  [ "rv32mi-p-mcsr", "misa reads 0 without S (Core, model)"
+  ; "rv32mi-p-instret_overflow", "counter writes ignored without S (Core, model)"
+  ; "rv32mi-p-breakpoint", "no trigger CSRs without S (Core, model)"
+  ]
 
 let run_test dir name =
   let tohost =
@@ -80,9 +119,11 @@ let run_test dir name =
                     else Error (Printf.sprintf "test case %d failed" (value lsr 1))))
     }
   in
-  if !core
+  if !core || !pipeline
   then (
-    let n, result = run_core dir name ~tohost in
+    let n, result =
+      if !pipeline then run_pipeline dir name ~tohost else run_core dir name ~tohost
+    in
     (match result with
      | Ok () -> printf "PASS %-24s %6d instructions (core)\n" name n
      | Error e -> printf "FAIL %-24s %s (core)\n" name e);
@@ -115,20 +156,19 @@ let () =
     | "--core" :: dirs ->
       core := true;
       dirs
+    | "--pipeline" :: dirs ->
+      pipeline := true;
+      dirs
     | dirs -> dirs
   in
-  let skipped_here =
-    if !core
-    then List.map core_skips ~f:(fun (n, why) -> n ^ ": " ^ why)
-    else []
-  in
+  let skips = if !pipeline then pipeline_skips else if !core then core_skips else [] in
+  let skipped_here = List.map skips ~f:(fun (n, why) -> n ^ ": " ^ why) in
   let names =
     List.concat_map dirs ~f:(fun dir ->
       Stdlib.Sys.readdir dir
       |> Array.to_list
       |> List.filter_map ~f:(String.chop_suffix ~suffix:".bin")
-      |> List.filter ~f:(fun n ->
-        not (!core && List.Assoc.mem core_skips ~equal:String.equal n))
+      |> List.filter ~f:(fun n -> not (List.Assoc.mem skips ~equal:String.equal n))
       |> List.sort ~compare:String.compare
       |> List.map ~f:(fun n -> dir, n))
   in

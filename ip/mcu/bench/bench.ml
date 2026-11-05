@@ -13,10 +13,14 @@ let clocks_per_bit = 4
 
 (* Simulation configurations: the boards' ISA and RAM, a fast UART. *)
 let icestick =
-  { Mcu.Config.base = Rv32e; ram_bytes = 4096; clocks_per_bit; counters = false; zicsr = false; dual_read = false; fetch_overlap = false; ma = false; barrel_shift = false }
+  { Mcu.Config.base = Rv32e; ram_bytes = 4096; clocks_per_bit; counters = false; zicsr = false; dual_read = false; fetch_overlap = false; ma = false; barrel_shift = false; pipeline = false }
 ;;
 
-let i9 = { Mcu.Config.base = Rv32i; ram_bytes = 65536; clocks_per_bit; counters = false; zicsr = true; dual_read = true; fetch_overlap = true; ma = true; barrel_shift = false }
+(* The i9 MCU as designs/mcu_i9 builds it: the pipelined core (#4) *)
+let i9 = { Mcu.Config.base = Rv32i; ram_bytes = 65536; clocks_per_bit; counters = false; zicsr = true; dual_read = true; fetch_overlap = true; ma = true; barrel_shift = false; pipeline = true }
+
+(* ... and with the multi-cycle core, as before #4 *)
+let i9_multicycle = { i9 with pipeline = false }
 let create config scope = Mcu.create config scope
 
 let words_of_image image =
@@ -103,6 +107,9 @@ let run
     Cyclesim.cycle sim;
     on_cycle !cycle;
     let irq = Bits.to_int !(o.irq) in
+    (* the pipeline decides at commit, in the cycle of the retirement or
+       before it *)
+    if config.pipeline && Bits.to_bool !(o.core.fetch) then irq_fetch := irq;
     let boundary_irq =
       if Bits.to_bool !(o.core.retire_trap)
          && Bits.to_int !(o.core.retire_cause) land 0x8000_0000 <> 0

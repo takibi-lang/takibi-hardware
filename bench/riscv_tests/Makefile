@@ -26,6 +26,7 @@ run: build
 	  then echo "FAIL: riscv-tests runner accepted a failing test" >&2; exit 1; \
 	  else echo "OK: riscv-tests runner rejects a failing test"; fi
 	$(RUN) $(addprefix build/,$(GROUPS)) $(addsuffix _v,$(addprefix build/,$(V_GROUPS)))
+	$(RUN) --pipeline $(addprefix build/,rv32ui rv32um rv32ua rv32mi)
 	$(RUN) --core $(addprefix build/,$(CORE_GROUPS)) $(addsuffix _v,$(addprefix build/,$(V_GROUPS)))
 
 clean:

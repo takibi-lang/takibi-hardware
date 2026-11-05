@@ -26,7 +26,7 @@ let osc_mhz = 25
    testbenches follow. Chosen below the estimated Fmax with a margin
    (issue #23). *)
 let use_pll = not (Option.equal String.equal (Sys.getenv "EXPERIMENT") (Some "no-pll"))
-let clock_mhz = if use_pll then 50 else osc_mhz
+let clock_mhz = if use_pll then 40 else osc_mhz
 let clock_hz = clock_mhz * 1_000_000
 
 let config =
@@ -39,6 +39,7 @@ let config =
   ; fetch_overlap = true
   ; ma = true
   ; barrel_shift = false (* evaluated for #23: CPI 2.69 -> 2.67, +449 LUTs *)
+  ; pipeline = true
   }
 ;;
 

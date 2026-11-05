@@ -64,7 +64,7 @@ let%expect_test "iCEstick configuration: RV32E echo firmware, in lockstep" =
 
 let%expect_test "i9 configuration: RV32I echo firmware, in lockstep" =
   print_result
-    (run Bench.i9 ~image:(firmware "echo_rv32i.bin") ~input:"rv32i\r" ~cycles:200_000);
+    (run Bench.i9_multicycle ~image:(firmware "echo_rv32i.bin") ~input:"rv32i\r" ~cycles:200_000);
   [%expect {|
     "RV32 MCU ready\r\n> rv32i\r\nRV32I\r\n> "
     leds=5 trap=none retired>0=true
@@ -74,7 +74,7 @@ let%expect_test "i9 configuration: RV32I echo firmware, in lockstep" =
 
 let%expect_test "i9 configuration: Dhrystone (50 runs), in lockstep" =
   let r =
-    run Bench.i9 ~image:(firmware "dhrystone_sim.bin") ~input:"" ~cycles:3_000_000
+    run Bench.i9_multicycle ~image:(firmware "dhrystone_sim.bin") ~input:"" ~cycles:3_000_000
   in
   print_result ~mask_numbers:true r;
   (match dhrystone_counts r.output with
@@ -90,10 +90,40 @@ let%expect_test "i9 configuration: Dhrystone (50 runs), in lockstep" =
 ;;
 
 let%expect_test "i9 configuration: interrupts and traps (timer, software, ecall, UART RX)" =
-  let r = run Bench.i9 ~image:(firmware "irq_rv32i.bin") ~input:"irq\r" ~cycles:200_000 in
+  let r = run Bench.i9_multicycle ~image:(firmware "irq_rv32i.bin") ~input:"irq\r" ~cycles:200_000 in
   print_result r;
   printf "interrupts>10=%b\n" (r.interrupts > 10);
   [%expect {|
+    "irq: timer ok, software ok, ecall ok\r\n> irq\r\nIRQ\r\n> "
+    leds=1 trap=none retired>0=true
+    lockstep: ok
+    interrupts>10=true
+    |}]
+;;
+
+(* The pipelined core (#4) in the i9 configuration *)
+let i9_pipeline = Bench.i9
+
+let%expect_test "i9 pipeline: echo, Dhrystone and interrupts, in lockstep" =
+  print_result
+    (run i9_pipeline ~image:(firmware "echo_rv32i.bin") ~input:"rv32i\r" ~cycles:200_000);
+  let r = run i9_pipeline ~image:(firmware "dhrystone_sim.bin") ~input:"" ~cycles:3_000_000 in
+  print_result ~mask_numbers:true r;
+  (match dhrystone_counts r.output with
+   | Some (runs, cycles, instret) ->
+     printf "runs=%d CPI=%.2f\n" runs (Float.of_int cycles /. Float.of_int instret)
+   | None -> print_endline "no dhrystone line");
+  let r = run i9_pipeline ~image:(firmware "irq_rv32i.bin") ~input:"irq\r" ~cycles:200_000 in
+  print_result r;
+  printf "interrupts>10=%b\n" (r.interrupts > 10);
+  [%expect {|
+    "RV32 MCU ready\r\n> rv32i\r\nRV32I\r\n> "
+    leds=5 trap=none retired>0=true
+    lockstep: ok
+    "dhrystone: runs=# cycles=# instret=#\r\ndhrystone: DMIPS/MHz=#.#\r\nMicroseconds for one run through Dhrystone: #\r\nDhrystones per Second:                      #\r\n"
+    leds=1 trap=2 retired>0=true
+    lockstep: ok
+    runs=50 CPI=1.67
     "irq: timer ok, software ok, ecall ok\r\n> irq\r\nIRQ\r\n> "
     leds=1 trap=none retired>0=true
     lockstep: ok

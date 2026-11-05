@@ -25,6 +25,7 @@ let config =
   ; fetch_overlap = false
   ; ma = false
   ; barrel_shift = false
+  ; pipeline = false
   }
 ;;
 

@@ -42,6 +42,9 @@ module Config = struct
     ; fetch_overlap : bool (* fetch the next instruction in Execute (#4) *)
     ; ma : bool (* M and A extensions, FENCE.I (#5) *)
     ; barrel_shift : bool (* one-cycle shifts (#4, #23) *)
+    ; pipeline : bool
+        (* the pipelined core (Rv32.Pipeline, #4: RV32I, M, A, Zicsr only)
+           with its own fetch port on the RAM *)
     }
 
   let ram_words t = t.ram_bytes / 4
@@ -88,8 +91,32 @@ let create (config : Config.t) scope (i : _ I.t) =
   (* Block RAM: every request is accepted at once, read data comes in the
      next cycle (the core's bus protocol, #26). *)
   let%hw core_rvalid = wire 1 in
-  let core =
-    Rv32.Core.hierarchical
+  let%hw imem_rdata = wire 32 in
+  let%hw imem_rvalid = wire 1 in
+  let core, imem =
+    if config.pipeline
+    then (
+      assert (config.zicsr && config.ma && Poly.equal config.base Rv32i);
+      let p =
+        Rv32.Pipeline.hierarchical
+          ~base:config.base
+          scope
+          { Rv32.Pipeline.I.clock = i.clock
+          ; clear
+          ; mem_rdata
+          ; mem_ready = vdd
+          ; mem_rvalid = core_rvalid
+          ; imem_rdata
+          ; imem_ready = vdd
+          ; imem_rvalid
+          ; irq
+          }
+      in
+      imem_rvalid <== (reg spec p.imem_read -- "imem_rvalid_q");
+      p.core, Some p.imem_addr)
+    else (
+      imem_rvalid <== gnd;
+      ( Rv32.Core.hierarchical
       ~zicsr:config.zicsr
       ~dual_read:config.dual_read
       ~fetch_overlap:config.fetch_overlap
@@ -108,6 +135,7 @@ let create (config : Config.t) scope (i : _ I.t) =
       ; seip = gnd
       ; mtime = zero 64
       }
+      , None ))
   in
   core_rvalid <== (reg spec core.mem_read -- "core_rvalid_q");
   let addr = core.mem_addr in
@@ -132,11 +160,26 @@ let create (config : Config.t) scope (i : _ I.t) =
               ; write_data = mux2 i.load_we (byte i.load_data) (byte core.mem_wdata)
               }
            |]
-         ~read_ports:[| { read_clock = i.clock; read_address = word; read_enable = vdd } |]
-         ()).(0)
-      -- (ram_lane_name k ^ "_q"))
+         ~read_ports:
+           (Array.append
+              [| { Read_port.read_clock = i.clock; read_address = word; read_enable = vdd } |]
+              (match imem with
+               | None -> [||]
+               | Some a ->
+                 [| { Read_port.read_clock = i.clock
+                    ; read_address = a.:[word_bits + 1, 2]
+                    ; read_enable = vdd
+                    }
+                 |]))
+         ())
+      |> fun ports ->
+      ( ports.(0) -- (ram_lane_name k ^ "_q")
+      , if Array.length ports > 1 then Some (ports.(1) -- (ram_lane_name k ^ "_iq")) else None ))
   in
-  let%hw ram_rdata = concat_lsb lanes in
+  let%hw ram_rdata = concat_lsb (List.map lanes ~f:fst) in
+  (match imem with
+   | None -> imem_rdata <== zero 32
+   | Some _ -> imem_rdata <== concat_lsb (List.filter_map lanes ~f:snd));
   (* UART *)
   let io_write r = core.mem_write &: is_io &: (io_reg ==:. r) in
   let io_read r = core.mem_read &: is_io &: (io_reg ==:. r) in
