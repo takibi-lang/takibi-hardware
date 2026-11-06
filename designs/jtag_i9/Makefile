@@ -3,6 +3,7 @@
 #   make            build build/top.bit
 #   make prog       load it into SRAM
 #   make jtag-test  write and read the ER1 register with OpenOCD
+.DELETE_ON_ERROR:
 ROOT  := $(abspath ../..)
 BUILD := build
 EXE   := $(ROOT)/_build/default/designs/jtag_i9/bin/main.exe

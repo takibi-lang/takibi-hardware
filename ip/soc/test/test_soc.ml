@@ -107,7 +107,7 @@ let%expect_test "SoC: memories, UART, timer and PLIC interrupts, in lockstep" =
     (String.concat ~sep:"; " r.flash_errors);
   [%expect {|
     output "SoC\nmem\ntimer\n>Z\nok\n"
-    halted 2, retired 862, interrupts 2, cycles>0 true
+    halted 2, retired 694, interrupts 2, cycles>0 true
     mismatch none
     sdram
     flash

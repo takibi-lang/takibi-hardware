@@ -1,3 +1,4 @@
+.DELETE_ON_ERROR:
 PROJECT := designs/mcu
 EXPECT_BRAM := 10
 # 1119 LCs with the cloud/CI toolchain (Ubuntu 24.04), 1139 with the

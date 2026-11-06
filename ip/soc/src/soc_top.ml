@@ -224,6 +224,10 @@ let create (c : Config.t) scope (i : _ I.t) =
             of_int ~width:32 (if k < rom_words then c.boot_rom.(k) else 0))))
     -- "rom_data"
   in
+  (* a second register after the block RAM the ROM becomes (timing: its
+     output -> load alignment -> register file was at 20.3 ns); the ROM
+     answers a cycle later *)
+  let rom_data = reg spec rom_data -- "rom_data_q" in
   (* Register-bus devices *)
   let clint =
     Clint.hierarchical ~harts ~cycles_per_tick:(c.clock_hz / 1_000_000) scope (bus Target.clint)
@@ -294,9 +298,14 @@ let create (c : Config.t) scope (i : _ I.t) =
   let owner = reg spec ~enable:accepted_read target -- "read_owner" in
   let owner_hart = reg spec ~enable:accepted_read sel -- "read_owner_hart" in
   let device_read =
-    accepted_read &: ~:(is Target.sdram) &: ~:(is Target.flash)
+    accepted_read &: ~:(is Target.sdram) &: ~:(is Target.flash) &: ~:(is Target.rom)
   in
-  let device_rvalid = reg spec device_read -- "device_rvalid" in
+  let rom_read = accepted_read &: is Target.rom in
+  let device_rvalid =
+    ((reg spec device_read -- "device_read_d")
+     |: (reg spec (reg spec rom_read -- "rom_read_d") -- "rom_read_dd"))
+    -- "device_rvalid"
+  in
   let owner_is t = owner ==:. t in
   let rvalid =
     (device_rvalid |: (owner_is Target.flash &: flash.rvalid) |: (owner_is Target.sdram &: cache.rvalid))
@@ -311,10 +320,15 @@ let create (c : Config.t) scope (i : _ I.t) =
   <== mux
         owner
         [ rom_data; clint.rdata; plic.rdata; uart.rdata; flash.rdata; cache.rdata; zero 32; zero 32 ];
+  (* PLIC threshold -> interrupt decision -> bus request -> SDRAM dq enable
+     was the one-core critical path: register the PLIC outputs *)
+  let plic_irq = reg spec plic.irq -- "plic_irq_q" in
   Array.iteri irq ~f:(fun h w ->
-    w <== (plic.irq.:(2 * h) @: clint.mtip.:(h) @: clint.msip.:(h)));
-  Array.iteri seip ~f:(fun h w -> w <== plic.irq.:((2 * h) + 1));
-  mtime <== clint.mtime;
+    w <== (plic_irq.:(2 * h) @: clint.mtip.:(h) @: clint.msip.:(h)));
+  Array.iteri seip ~f:(fun h w -> w <== plic_irq.:((2 * h) + 1));
+  (* registered near the cores (timing: CLINT -> Sstc compare -> interrupt
+     decision was the two-core critical path); the benches see the same *)
+  mtime <== (reg spec clint.mtime -- "mtime_q");
   let hart_irq h = if h < harts then seip.(h) @: irq.(h) else zero 4 in
   let core1 =
     if harts > 1 then cores.(1) else Rv32.Core.O.map Rv32.Core.O.port_widths ~f:(fun w -> zero w)

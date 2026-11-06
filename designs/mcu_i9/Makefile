@@ -1,3 +1,4 @@
+.DELETE_ON_ERROR:
 PROJECT := designs/mcu_i9
 # 32 DP16KD = 64 KiB RAM (the register file uses distributed RAM).
 EXPECT_BRAM := 32

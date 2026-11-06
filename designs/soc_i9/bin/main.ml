@@ -24,7 +24,10 @@ let verilog boot =
     print_endline line;
     if Mcu_gen.Rtl_init.zero_register_file line then Int.incr regfiles;
     if Mcu_gen.Rtl_init.zero_register no_reset line then Int.incr zeroed);
-  if !regfiles <> 2 then Printf.failwithf "expected 2 register files, found %d" !regfiles ();
+  (* two per core (rs1, rs2 copies); each core is its own module (mhartid) *)
+  let expected = 2 * Soc_i9.harts in
+  if !regfiles <> expected
+  then Printf.failwithf "expected %d register files, found %d" expected !regfiles ();
   if !zeroed <> List.length no_reset
   then Printf.failwithf "expected %d power-up registers, found %d" (List.length no_reset) !zeroed ()
 ;;

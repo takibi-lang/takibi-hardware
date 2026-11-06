@@ -10,6 +10,7 @@
 #                   power-up (needs the images: make -C sw/linux images)
 #
 # The top level is rtl/top.v (BB and USRMCLK) around the generated soc_board.
+.DELETE_ON_ERROR:
 ROOT     := $(abspath ../..)
 BUILD    ?= build
 EXE      := $(ROOT)/_build/default/designs/soc_i9/bin/main.exe
