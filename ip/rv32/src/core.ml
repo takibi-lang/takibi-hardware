@@ -702,11 +702,17 @@ let create
   let%hw_var retire_irq = Always.Variable.wire ~default:gnd in
   let%hw_var fetch_fault = Always.Variable.wire ~default:gnd in
   let%hw_var overlapping = Always.Variable.wire ~default:gnd in
+  (* With fetches translated (#23), the overlapped fetch of the next
+     sequential instruction in the same page uses the page of the current
+     one (recorded when it was fetched), so it needs no TLB lookup and no
+     new permission check. *)
+  let%hw_var fetch_page = Always.Variable.reg ~width:20 spec in
+  let%hw overlap_same_page = ~:taken &: (pc.value.:[11, 2] <>:. 0x3ff) in
   let%hw overlap_ok =
     if fetch_overlap
     then
       ~:(mem_op |: dec.csr |: dec.mret |: dec.sret |: dec.sfence_vma |: irq_due |: dec.mul
-         |: dec.div |: fetch_xlate)
+         |: dec.div |: (fetch_xlate &: ~:overlap_same_page))
     else gnd
   in
   (* M: the product (registered) and the divider. *)
@@ -986,7 +992,9 @@ let create
                         ~deleg:irq_deleg)
                   [ if_
                       fetch_ready
-                      [ mem_read <-- vdd; when_ i.mem_ready [ sm.set_next Decode ] ]
+                      [ mem_read <-- vdd
+                      ; when_ i.mem_ready [ fetch_page <-- fetch_pa.:[31, 12]; sm.set_next Decode ]
+                      ]
                       [ walk_va <-- pc.value; walk_kind <--. 0; sm.set_next Ptw_l1 ]
                   ]
               ] )
@@ -1203,7 +1211,13 @@ let create
            (mux2
               (sm.is Ptw_l0)
               ptw_l0_addr
-              (if fetch_overlap then mux2 (sm.is Execute) next_pc data_pa else data_pa)))
+              (if fetch_overlap
+               then
+                 mux2
+                   (sm.is Execute)
+                   (mux2 fetch_xlate (fetch_page.value @: next_pc.:[11, 0]) next_pc)
+                   data_pa
+               else data_pa)))
     else
       mux2
         (sm.is Fetch)

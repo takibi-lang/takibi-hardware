@@ -351,12 +351,15 @@ let create ?(reset_pc = 0) ~base scope (i : _ I.t) =
     let a_signed = x_funct3 ==:. 1 |: (x_funct3 ==:. 2) in
     let b_signed = x_funct3 ==:. 1 in
     let ext s x = mux2 s (msb x) gnd @: x in
-    let p = ext a_signed a *+ ext b_signed b in
+    (* from the operand registers, not the forwarded values (timing: C ->
+       forward -> MULT18X18D was the critical path); a multiplication or
+       division waits while C writes one of its sources *)
+    let p = ext a_signed ex_a.value *+ ext b_signed ex_b.value in
     mux2 (x_funct3 ==:. 0) p.:[31, 0] p.:[63, 32]
   in
   let div_signed = ~:(x_funct3.:(0)) in
   let abs_if neg x = mux2 neg (negate x) x in
-  let div_divisor = abs_if (div_signed &: msb b) b in
+  let div_divisor = abs_if (div_signed &: msb ex_b.value) ex_b.value in
   let div_step_rem = div_rem.value @: div_quot.value.:(31) in
   let div_step_sub = (gnd @: div_step_rem) -: (zero 2 @: div_divisor) in
   let div_result =
@@ -373,13 +376,9 @@ let create ?(reset_pc = 0) ~base scope (i : _ I.t) =
       (mux2 xd.div (ex_busy.value &: (div_count.value ==:. 0)) vdd)
   in
   let c_free = ~:(c_valid.value) |: c_done.value in
+  (* (no ~flush here: a flush empties EX and C anyway, below; timing) *)
   let ex_advance =
-    ex_valid.value
-    &: ex_finished
-    &: c_free
-    &: ~:ex_needs_c
-    &: ~:(flush.value)
-    &: ~:(halted.value)
+    ex_valid.value &: ex_finished &: c_free &: ~:ex_needs_c &: ~:(halted.value)
     -- "ex_advance"
   in
   (* ---------------------------------------------------------------- *)
@@ -388,8 +387,7 @@ let create ?(reset_pc = 0) ~base scope (i : _ I.t) =
   let id_insn = q0_insn.value in
   let ex_free = ~:(ex_valid.value) |: ex_advance in
   let id_advance =
-    id_valid &: ex_free &: ~:(flush.value) &: ~:(redirect.value) &: ~:(halted.value)
-    -- "id_advance"
+    id_valid &: ex_free &: ~:(redirect.value) &: ~:(halted.value) -- "id_advance"
   in
   (* register file: two asynchronous read ports, written by C *)
   let rf_read ~name addr =
@@ -427,13 +425,19 @@ let create ?(reset_pc = 0) ~base scope (i : _ I.t) =
     uresize q0_valid.value 3 +: uresize q1_valid.value 3 +: uresize response 3
     -: uresize consume 3
   in
+  (* A flush from C redirects fetch one cycle later (flush_q; timing: the
+     trap decision no longer reaches the fetch address and the queue). No
+     request goes out in the flush cycle. *)
+  let flush_q = reg spec flush.value -- "flush_q" in
+  let flush_target_q = reg spec flush_target.value -- "flush_target_q" in
   let can_request =
     (~:(inflight.value) |: response)
-    &: (redirect.value |: flush.value |: (entries_after <:. 2))
+    &: (redirect.value |: flush_q |: (entries_after <:. 2))
+    &: ~:(flush.value)
     &: ~:(halted.value)
   in
   let fetch_pc =
-    mux2 flush.value flush_target.value (mux2 redirect.value redirect_target.value pc_f.value)
+    mux2 flush_q flush_target_q (mux2 redirect.value redirect_target.value pc_f.value)
   in
   let request = can_request in
   let accepted = request &: i.imem_ready in
@@ -593,15 +597,16 @@ let create ?(reset_pc = 0) ~base scope (i : _ I.t) =
       ; (* a multiplication or division starts once its operands are
            there (not waiting for C) *)
         when_
-          (ex_valid.value &: ~:(ex_busy.value) &: ~:ex_needs_c)
+          (ex_valid.value &: ~:(ex_busy.value) &: ~:ex_dep)
           [ when_ xd.mul [ mul_result <-- product; ex_busy <-- vdd ]
           ; when_
               xd.div
-              [ div_quot <-- abs_if (div_signed &: msb a) a
+              [ div_quot <-- abs_if (div_signed &: msb ex_a.value) ex_a.value
               ; div_rem <--. 0
               ; div_count <--. 32
-              ; div_neg_q <-- (div_signed &: (msb a ^: msb b) &: (b <>:. 0))
-              ; div_neg_r <-- (div_signed &: msb a)
+              ; div_neg_q
+                <-- (div_signed &: (msb ex_a.value ^: msb ex_b.value) &: (ex_b.value <>:. 0))
+              ; div_neg_r <-- (div_signed &: msb ex_a.value)
               ; ex_busy <-- vdd
               ]
           ]
@@ -701,7 +706,7 @@ let create ?(reset_pc = 0) ~base scope (i : _ I.t) =
           ]
       ; (* redirects: EX (branches) and C (traps, MRET, FENCE.I) *)
         when_
-          (redirect.value |: flush.value)
+          (redirect.value |: flush.value |: flush_q)
           [ q0_valid <-- gnd
           ; q1_valid <-- gnd
           ; when_ (~:accepted) [ pc_f <-- fetch_pc ]

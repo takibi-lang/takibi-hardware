@@ -56,8 +56,8 @@ let%expect_test "pipeline: random programs in lockstep" =
       program);
   [%expect {|
     base: 300 programs, 40739 instructions, 0 interrupts, 0 failures
-    csr+ma+irq: 300 programs, 47315 instructions, 843 interrupts, 0 failures
-    csr+ma+irq, wait states: 300 programs, 48924 instructions, 1233 interrupts, 0 failures
+    csr+ma+irq: 300 programs, 47003 instructions, 765 interrupts, 0 failures
+    csr+ma+irq, wait states: 300 programs, 48882 instructions, 1222 interrupts, 0 failures
     |}]
 ;;
 

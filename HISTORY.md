@@ -5,6 +5,12 @@ done, what was learned, and the numbers measured that day.
 
 ## 2026-11-06: two cores, Linux SMP on the i9 (#9), formal proofs (S0f)
 
+- Speed (#23, evaluated): answering cache read hits in the tag-compare
+  cycle (one cycle less per access) put block RAM -> hit -> bus rvalid ->
+  core state on the critical path: 44.1 MHz with two cores (52 before).
+  About 15-20% fewer cycles for 12% lower clock, and in the way of a
+  faster clock: not kept.
+
 - Maintainer decisions: Linux SMP, a shared cache (coherent by
   construction; for the kernel all three schemes look the same), the
   multi-cycle core (S/U, Sv32); the pipeline gets S-mode later.

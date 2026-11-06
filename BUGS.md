@@ -77,15 +77,33 @@ one change per board experiment, or an ablation switch (AGENTS.md).
 | S0f | 1 |
 | S1 | 24 |
 | S2 | 2 (board-sim) |
-| S3 | 8 |
+| S3 | 9 |
 | S4 | 4 |
 
 By class: testbench 20, toolchain 4, model 1, inference 1, resource 1,
-reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 1 more (B-0043), reset/init 1 more (B-0035), logic 3 more (B-0039, B-0041, B-0047), io/pinout 2 (B-0044, B-0046).
+reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 2 more (B-0043, B-0051), reset/init 1 more (B-0035), logic 3 more (B-0039, B-0041, B-0047), io/pinout 2 (B-0044, B-0046).
 No functional defect in the hardware itself has been found yet: the rv32e
 core and the MCU passed lockstep on their first run.
 
 ## Entries
+
+### B-0051: the i9 MCU pipeline fell below 40 MHz after unrelated changes
+
+- Date: 2026-11-06
+- Project: ip/rv32 (Pipeline, #4), designs/mcu_i9
+- Found at: S3, in CI (4 runs in a row: 37.62 MHz, FAIL at 40 MHz); the
+  local build had passed at 40.82 MHz before; Catchable at: S3
+- Class: fmax
+- Symptom: `make synth` failed in CI after the dual-core commits.
+- Cause: the pipeline was committed with a 2% margin; later changes to
+  shared code moved the placement. Two long paths: the commit stage's
+  trap decision -> flush -> fetch address -> fetch queue, and C's result
+  forwarded into the MULT18X18D.
+- Fix: a flush redirects fetch one cycle later (no request in the flush
+  cycle) and no longer gates the ID/EX advance; multiply and divide start
+  from the operand registers (waiting while C writes a source). 41.3 MHz.
+  Process: I had not run `make` before pushing the dual-core commits.
+- Regression: `make synth` (the build fails below the target).
 
 ### B-0050: lockstep fed an AMO with rd = x0 a stale loaded value
 
