@@ -1,9 +1,11 @@
 # takibi-hardware
 
-A CPU written in [HardCaml](https://github.com/janestreet/hardcaml), running
-on the [iCEstick](https://www.latticesemi.com/en/Products/DevelopmentBoardsAndKits/iCEstick)
-(iCE40HX1K-TQ144, 12 MHz) through the open-source Yosys / nextpnr / icestorm
-flow.
+A Linux-capable RISC-V SoC written in
+[HardCaml](https://github.com/janestreet/hardcaml), running on the
+[Colorlight i9 v7.2](https://github.com/wuxx/Colorlight-FPGA-Projects)
+(Lattice ECP5 LFE5U-45F, 8 MiB SDRAM) through the open-source Yosys /
+nextpnr / Project Trellis flow. Linux 6.18 boots on the board, with one or
+two cores (SMP), to a small REPL on the UART.
 
 The underlying question is whether cheap verification in HardCaml can catch
 most hardware defects before simulation of the generated Verilog and testing
@@ -11,71 +13,65 @@ on the board. See [docs/WORKFLOW.md](docs/WORKFLOW.md) for the method,
 [BUGS.md](BUGS.md) for the evidence, and [HISTORY.md](HISTORY.md) for the
 project log.
 
-## Projects
+## The SoC
 
-| Directory | Description | Stages |
-|-----------|-------------|--------|
-| [ip/uart](ip/uart/) | 8N1 UART transmitter and receiver | S1, S2 |
-| [ip/rv32](ip/rv32/) | Multi-cycle RV32I / RV32E core | S0 (SAT proofs), S1 (lockstep, random programs) |
-| [designs/blink](designs/blink/) | LED blinker | S1, S3 |
-| [designs/hello](designs/hello/) | Prints "Hello, iCEstick!" at 115200 baud | S1, S2, S3 |
-| [designs/mcu](designs/mcu/) | RV32E MCU on the iCEstick running C firmware (UART echo) | S1, S2, S3 |
-| [designs/mcu_i9](designs/mcu_i9/) | RV32I MCU on the Colorlight i9 (ECP5) running Dhrystone | S1, S3, S4 |
-| [designs/soc_i9](designs/soc_i9/) | Linux SoC (RV32IMA, S/U, Sv32, SDRAM, SPI flash, CLINT, PLIC, 16550) on the Colorlight i9: boots Linux 6.18 to a REPL | S1, S2 (Verilator boot), S3, S4 |
-| [ip/mcu](ip/mcu/) | The MCU (core + RAM + UART + LEDs + counters), shared by both boards | S1, S2 |
-| [bench/ref_cores](bench/ref_cores/) | Area and Dhrystone of reference cores ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)) | -- |
-| [models/rv32_model](models/rv32_model/) | RV32E golden model and assembler | tests |
-| [sw](sw/) | MCU firmware (C, built with riscv-none-elf-gcc) | -- |
-
-No design has been run on a board yet (S4).
+- Core: multi-cycle RV32IMA with Zicsr, M/S/U modes, Sv32 MMU (TLB and
+  page walker), Sstc; checked in lockstep against an OCaml golden model at
+  every retired instruction.
+- One or two cores (`HARTS=2`) sharing a cache in front of the SDRAM, with
+  an arbiter for AMOs and LR/SC (proved with SymbiYosys, `formal/`).
+- CLINT, PLIC, 16550 UART, SPI flash (bitstream, device tree, kernel),
+  boot ROM with a minimal SBI (timer, IPI, remote fences).
+- 50 MHz on the board. Numbers: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Quick start
 
     make setup     # once per clone: enable the git hooks
-    make           # langcheck, tests, synthesis, S3 checks
-    make ci        # the above plus the Verilator stage
+    make           # langcheck, tests, formal, synthesis, S3 checks
+    make ci        # the above plus the Verilator stages
 
-## Running the MCU on an iCEstick
-
-    make mcu-prog  # build designs/mcu with sw/echo.bin and flash it
-    make mcu-term  # picocom -b 115200 /dev-host/ttyUSB1 (override with TTY=...)
-
-The iCEstick's FTDI chip exposes two serial ports; the UART is the second
-(usually `/dev-host/ttyUSB1`). After reset the MCU prints `RV32E MCU ready` and
-a `> ` prompt. Type a line and press Enter: it answers in upper case and
-shows the line length on the LEDs. Leave picocom with Ctrl-A Ctrl-X.
-
-Changing only the firmware (`sw/`) is fast: the hardware is synthesised
-once with placeholder RAM contents, and `icebram` writes the new program
-into the existing bitstream. `make mcu-prog` after editing
-`sw/echo/main.c` takes about a second plus flashing; only HDL changes
-re-run Yosys and nextpnr (about 16 s).
-
-## Running the MCU on a Colorlight i9 v7.2
-
-    make i9-prog   # build designs/mcu_i9 with sw/dhrystone_rv32i.bin, load it
-    make i9-term   # picocom -b 115200 on the DAPLink's serial port (override with I9_TTY=...)
-
-The UART goes through the ext board's DAPLink (USB CDC serial). The
-firmware runs Dhrystone (500 runs) and prints cycles and DMIPS; reset the
-board (or reload) to run it again. `make -C designs/mcu_i9 flash` writes
-the SPI flash instead of the FPGA's SRAM. On the board it prints 0.385
-DMIPS/MHz, as in simulation; see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
-First session: [docs/BRINGUP_I9.md](docs/BRINGUP_I9.md).
-
-## Linux on the Colorlight i9 (issue #21)
+## Linux on the Colorlight i9
 
     make soc-i9-images  # kernel 6.18 + the REPL (initramfs), boot ROM, device tree
     make soc-i9-flash   # bitstream, device tree and kernel into the SPI flash
     make i9-term        # the console: Linux boots to "takibi-hardware REPL on Linux"
 
-Writing the flash takes about 10 minutes over the DAPLink. The SoC runs at
-50 MHz from the 8 MiB SDRAM without caches (uptime, `bench syscall`,
-`bench memcpy` in the REPL). `make soc-i9-sim` boots the same images on
-the SoC RTL in Verilator with the board models, every instruction in
-lockstep with the golden model. Bring-up aid: `make -C designs/soc_i9
+Writing the flash takes about 10 minutes over the ext board's DAPLink,
+which also carries the UART (USB CDC serial). In the REPL, `bench
+dhrystone`, `bench syscall` and `bench memcpy` measure the system.
+`make soc-i9-sim` boots the same images on the SoC RTL in Verilator with
+the board models, every instruction in lockstep with the golden model.
+
+Two cores: `HARTS=2 make -C designs/soc_i9 BOOT=sw/linux/boot_smp/boot.bin
+BUILD=build-smp LINUX=$PWD/build/linux-smp` with the images from `make -C
+sw/linux images-smp`. Bring-up aid: `make -C designs/soc_i9
 BOOT=sw/soc_test/memtest.bin BUILD=build-memtest prog` (SDRAM and flash
-test from the boot ROM, no flash contents needed).
+test from the boot ROM). First session with a board:
+[docs/BRINGUP_I9.md](docs/BRINGUP_I9.md).
+
+## Projects
+
+| Directory | Description | Stages |
+|-----------|-------------|--------|
+| [designs/soc_i9](designs/soc_i9/) | The Linux SoC on the Colorlight i9 | S1, S2 (Verilator boot), S3, S4 |
+| [ip/rv32](ip/rv32/) | RV32 cores: multi-cycle (S/U, Sv32) and a 4-stage pipeline (M only) | S0, S1 (lockstep, random programs, riscv-tests, arch-test) |
+| [ip/soc](ip/soc/) | Cache, arbiter, CLINT, PLIC, 16550, SoC top | S0f, S1, S2 |
+| [ip/sdram](ip/sdram/), [ip/spi_flash](ip/spi_flash/), [ip/ecp5](ip/ecp5/) | SDRAM controller, flash reader, ECP5 primitives (PLL, ODDR, JTAG) | S1, S4 |
+| [formal](formal/) | SymbiYosys proofs on the generated Verilog | S0f |
+| [models](models/) | Golden models: RV32 machine, SoC devices, assembler | tests |
+| [sw](sw/) | Boot ROMs, Linux build and REPL, firmware, Dhrystone | -- |
+| [bench/ref_cores](bench/ref_cores/) | Area and Dhrystone of reference cores | -- |
+
+### Smaller designs
+
+Kept building and tested by `make`, no longer the focus:
+
+| Directory | Description |
+|-----------|-------------|
+| [designs/mcu_i9](designs/mcu_i9/) | RV32I MCU (pipelined core, no MMU) on the i9 running Dhrystone: `make i9-prog`, `make i9-term` |
+| [designs/jtag_i9](designs/jtag_i9/) | ECP5 JTAG register test |
+| [designs/mcu](designs/mcu/), [ip/mcu](ip/mcu/) | RV32E MCU on the iCEstick (iCE40HX1K): `make mcu-prog`, `make mcu-term` |
+| [designs/hello](designs/hello/), [designs/blink](designs/blink/), [ip/uart](ip/uart/) | First iCEstick designs and the UART |
 
 ## Toolchain
 

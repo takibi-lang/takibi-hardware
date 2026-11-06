@@ -86,6 +86,10 @@ evidence; `docs/WORKFLOW.md` describes the method.
 - **Keep `HISTORY.md` up to date.** Add a dated entry with the gist of each
   working session: what was done, what was learned, measured numbers.
   Newest entry first. Do not turn `README.md` into a log.
+- **Keep `README.md` current.** It describes the present state, not the
+  history: the main target (the Linux SoC on the Colorlight i9), what it
+  runs, how to build and run it, and the project table. Update it in the
+  same commit when a feature, board, make target or directory changes.
 
 ## Layout
 
