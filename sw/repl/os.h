@@ -1,6 +1,8 @@
 /* The OS interface of the REPL (#24). The REPL and its benchmarks use only
-   these functions, so the same code builds for Linux (os_linux.c) and,
-   later, for Takibi (https://github.com/takibi-lang/takibi). */
+   these functions. Takibi (https://github.com/takibi-lang/takibi) is
+   Linux-ABI compatible, so the Linux build (os_linux.c, static, nolibc)
+   is also the Takibi build once Takibi runs on RV32; an os_<name>.c is
+   only needed for a kernel without the Linux system calls. */
 #ifndef REPL_OS_H
 #define REPL_OS_H
 
