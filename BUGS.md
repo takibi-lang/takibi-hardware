@@ -56,6 +56,33 @@ initial contents for memories whose contents matter; reset hold after
 configuration; flashing gated on all S3 checks; tool versions recorded;
 one change per board experiment, or an ablation switch (AGENTS.md).
 
+### Would formal tools have prevented the S4 defects? (2026-11-06)
+
+The four defects found at S4 (B-0014, B-0015, B-0044, B-0046) were
+checked against the formal tools of the oss-cad-suite (SymbiYosys, eqy,
+mcy). None of them would have been prevented: each is a wrong assumption
+about something outside the RTL, and a proof only checks the RTL against
+the properties and models we write, so a wrong model is proved as well.
+
+| Defect | Wrong assumption | Formal tools |
+|--------|------------------|--------------|
+| B-0014 | silicon: block RAM readable right after configuration | no: start-up is in no model |
+| B-0015 | process: Makefile dependencies, tool versions | no: not a design property |
+| B-0044 | hard primitive: undocumented JTAGG timing | no: a model with the wrong timing passes |
+| B-0046 | board: CAS latency counted from the wrong edge | no: the read latency is a parameter, and its value was the error |
+
+Where formal tools do pay: properties over many interleavings of the
+RTL itself. B-0048 (an SC deciding during the other core's AMO) was
+found by sby (S0f), and pipeline-control defects such as B-0047 are of
+the same kind. B-0049 (combinational loop) is a structural check that
+Yosys can make at synthesis.
+
+For the project's question: the S4-only class comes from assumptions
+outside the RTL. The cheaper defence there is not a proof but writing the
+assumption down next to the code (the SDRAM timing derivation in
+soc_i9.ml after B-0046) and small board experiments with an ablation
+switch (memtest, EXPERIMENT=...).
+
 ## Fields
 
 - **Found at**: the stage where the defect was first observed. OCaml
