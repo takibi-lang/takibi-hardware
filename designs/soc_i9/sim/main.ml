@@ -1,7 +1,7 @@
 (* L9 (issue #29): boot Linux on the SoC RTL, with the board models
    (SDRAM, flash, serial line) around it.
 
-     main.exe BOOT.bin SOC.dtb IMAGE [--verilator] [--no-lockstep]
+     main.exe BOOT.bin SOC.dtb IMAGE [--verilator] [--no-lockstep] [--harts 2]
               [--max CYCLES] [--input TEXT] [--until TEXT]
 
    The flash image holds the device tree and the kernel at Soc_map's
@@ -24,13 +24,17 @@ let () =
   and lockstep = ref true
   and max = ref 2_000_000_000
   and input = ref ""
-  and until = ref None in
+  and until = ref None
+  and harts = ref 1 in
   let rec parse = function
     | "--verilator" :: rest ->
       verilator := true;
       parse rest
     | "--no-lockstep" :: rest ->
       lockstep := false;
+      parse rest
+    | "--harts" :: n :: rest ->
+      harts := Int.of_string n;
       parse rest
     | "--max" :: n :: rest ->
       max := Int.of_string n;
@@ -67,7 +71,7 @@ let () =
         V.create
           ~verilator_config:Testlib.Verilator_config.config
           ~clock_names:[ "clock" ]
-          (Top.create (H.config ~boot_rom ()) (Hardcaml.Scope.create ~flatten_design:true ()))
+          (Top.create (H.config ~harts:!harts ~boot_rom ()) (Hardcaml.Scope.create ~flatten_design:true ()))
       in
       eprintf "[sim] Verilator model built in %.0f s\n%!" (Unix.gettimeofday () -. t0);
       Some sim)
@@ -76,6 +80,7 @@ let () =
   let t0 = Unix.gettimeofday () in
   let r =
     H.run
+      ~harts:!harts
       ?sim
       ~boot_rom
       ~flash:(Bytes.to_string flash)

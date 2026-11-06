@@ -2,6 +2,8 @@
 #
 #   make            synthesise, place and route, check resources: build/top.bit
 #   make prog       load the bitstream into the FPGA (SRAM) over the DAPLink
+#   HARTS=2 make BOOT=sw/linux/boot_smp/boot.bin BUILD=build-smp LINUX=../../build/linux-smp
+#                   the two-core SoC (#9) and its images
 #   make flash      write build/flash.bin into the SPI flash: the bitstream at 0,
 #                   the device tree and the kernel (with the REPL as initramfs)
 #                   at Soc_map's offsets; the board then boots Linux on
@@ -15,13 +17,14 @@ EXE      := $(ROOT)/_build/default/designs/soc_i9/bin/main.exe
 # test, e.g. make BOOT=sw/soc_test/memtest.bin BUILD=build-memtest prog
 BOOT     ?= sw/linux/boot/boot.bin
 BOOT_BIN := $(ROOT)/_build/default/$(BOOT)
-LINUX    := $(ROOT)/build/linux
+LINUX    ?= $(ROOT)/build/linux
 HWSRCS   := $(shell find src bin rtl $(ROOT)/ip $(ROOT)/models -name '*.ml' -o -name dune -o -name '*.v' 2>/dev/null)
 LPF      := colorlight_i9.lpf
 CLOCK_MHZ = $$($(EXE) clock-mhz)
 PNR      = nextpnr-ecp5 -q --45k --package CABGA381 --speed 6 --freq $(CLOCK_MHZ) --lpf $(LPF)
 # Raise deliberately and note why in HISTORY.md.
-MAX_LC   := 9000
+# 14358 with two cores (HARTS=2, #9).
+MAX_LC   := $(if $(filter 2,$(HARTS)),16000,9000)
 # The boot ROM (Yosys infers a DP16KD for it), the cache: 16 for data and
 # 1 for the tags.
 EXPECT_BRAM := 18
