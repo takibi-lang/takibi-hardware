@@ -3,6 +3,29 @@
 A dated log of the project, newest entry first. Each entry records what was
 done, what was learned, and the numbers measured that day.
 
+## 2026-11-06: two cores, Linux SMP on the i9 (#9), formal proofs (S0f)
+
+- Maintainer decisions: Linux SMP, a shared cache (coherent by
+  construction; for the kernel all three schemes look the same), the
+  multi-cycle core (S/U, Sv32); the pipeline gets S-mode later.
+- Model: harts with shared RAM, reservations lost on other harts'
+  stores, CLINT/PLIC per hart; boot ROM with SBI IPI and RFENCE, spinwait
+  boot, mailboxes in the top 4 KiB of RAM (also with one hart). Linux SMP
+  on the model: 'smp: Brought up 1 node, 2 CPUs'.
+- Hardware: Soc_top ~harts:2, a bus bridge per core and Soc.Arbiter (one
+  transaction at a time, AMO lock, SC writes first, snoops, sc_block).
+  14358 TRELLIS_COMB, 18 DP16KD, 52.0 MHz.
+- New stage S0f (make formal): SymbiYosys proves by k-induction on the
+  generated Verilog that no other write is granted between an SC's
+  decision and its write, that the AMO lock excludes the other core, one
+  transaction at a time. It found B-0048 (an SC deciding while the other
+  core's AMO held the lock) before the two-core SoC had ever run.
+- Two-core lockstep in Cyclesim (test_smp.ml: LR/SC and AMOs on one
+  counter): B-0049 (node-level loop), B-0050 (bench).
+- Board: Linux 6.18 SMP boots to the REPL with 2 CPUs ('SBI IPI extension
+  detected', 'smp: Brought up 1 node, 2 CPUs'). Dhrystone per core 0.143
+  DMIPS/MHz (0.203 with one core: the cores share the cache and bus).
+
 ## 2026-11-05 (2): the pipelined core (#4), DMIPS on the i9 (#23)
 
 - Rv32.Pipeline: IF, ID, EX, commit; branches predicted not taken
