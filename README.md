@@ -73,6 +73,14 @@ Kept building and tested by `make`, no longer the focus:
 | [designs/mcu](designs/mcu/), [ip/mcu](ip/mcu/) | RV32E MCU on the iCEstick (iCE40HX1K): `make mcu-prog`, `make mcu-term` |
 | [designs/hello](designs/hello/), [designs/blink](designs/blink/), [ip/uart](ip/uart/) | First iCEstick designs and the UART |
 
+## Talks
+
+[RTL Meetup (19), 2026-11-21](docs/talks/2026-11-21-rtl-meetup-19/slides.md)
+introduces the verification stages and defect ledger. With Marp CLI and
+Chromium installed, run `make -C docs/talks/2026-11-21-rtl-meetup-19 html`
+or `pdf` to render the slides; `make show` in that directory opens the
+presentation with a five-minute pace timer.
+
 ## Toolchain
 
 - Local: open the repository in the devcontainer (`.devcontainer/`).

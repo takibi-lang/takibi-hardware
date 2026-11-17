@@ -24,6 +24,9 @@ category, because they cost iterations just the same.
 
 ## Analysis (audit of B-0001..B-0016, 2026-10-28)
 
+This section is a historical snapshot of the first 16 entries, not a
+claim about the current design. See Summary for the full ledger counts.
+
 Root-cause categories, independent of the stage that found them:
 
 | Category | Defects | Notes |
@@ -98,19 +101,51 @@ switch (memtest, EXPERIMENT=...).
 
 ## Summary
 
+Audited against all 51 entries (B-0001..B-0051) on 2026-11-17.
+Counts use the first observed stage (Found at), not Catchable at.
+B-0016 uses S2b, the current name for board-sim.
+
 | Found at | Count |
 |----------|-------|
-| S0 | 2 |
+| S0 | 3 |
 | S0f | 1 |
-| S1 | 24 |
-| S2 | 2 (board-sim) |
-| S3 | 9 |
+| S1 | 28 |
+| S2 | 0 |
+| S2b | 2 |
+| S2n | 3 |
+| S3 | 10 |
 | S4 | 4 |
+| **Total** | **51** |
 
-By class: testbench 20, toolchain 4, model 1, inference 1, resource 1,
-reset/init 1, process/environment 1, logic 1, model 1 more (B-0026), naming 2 (B-0031, B-0042), fmax 2 more (B-0043, B-0051), reset/init 1 more (B-0035), logic 3 more (B-0039, B-0041, B-0047), io/pinout 2 (B-0044, B-0046).
-No functional defect in the hardware itself has been found yet: the rv32e
-core and the MCU passed lockstep on their first run.
+By recorded class (parenthetical detail omitted; historical labels retained):
+
+| Class | Count |
+|-------|-------|
+| RTL structure | 1 |
+| fmax | 2 |
+| implicit assumption about silicon or tools | 1 |
+| inference | 1 |
+| io/pinout | 2 |
+| logic | 6 |
+| model | 2 |
+| naming | 2 |
+| our own checks | 2 |
+| process / environment | 1 |
+| reset/init | 2 |
+| resource | 1 |
+| specification / off-by-one | 1 |
+| testbench | 20 |
+| testbench timing or protocol | 2 |
+| timing | 1 |
+| toolchain | 4 |
+| **Total** | **51** |
+
+S0, S0f and S1 first exposed 32 of 51 recorded defects. These counts
+include testbench, model, checking-tool and process defects; they are not
+a measurement of RTL defect coverage or a comparison with Verilog.
+Functional logic defects are recorded, including B-0039, B-0041, B-0047
+and B-0048. Four defects were first observed at S4; B-0015 is catchable
+at S3 and B-0044 at S1 once the primitive timing is modeled correctly.
 
 ## Entries
 
@@ -686,7 +721,7 @@ core and the MCU passed lockstep on their first run.
 
 - Date: 2026-10-28
 - Project: designs/mcu (tb_top.v)
-- Found at: S2 board-sim; Catchable at: S2 board-sim
+- Found at: S2b (board-sim); Catchable at: S2b
 - Class: testbench
 - Symptom: the board simulation printed the right text but reported FAIL.
 - Cause: the expected tail was written as the string "\r\nHI\r\n> ";

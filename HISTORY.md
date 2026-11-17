@@ -3,6 +3,21 @@
 A dated log of the project, newest entry first. Each entry records what was
 done, what was learned, and the numbers measured that day.
 
+## 2026-11-17: defect ledger audit for the RTL study-group LT
+
+- Drafted 12 English Marp slides for RTL Meetup (19) on 2026-11-21,
+  with one slide per verification stage and questions for expert feedback.
+- Added shared Marp build targets, the Takibi theme and icon assets, and
+  a presentation pace timer. Linked the talk and build commands in README.
+
+- Recounted B-0001..B-0051 by first observed stage and recorded class.
+  S0: 3, S0f: 1, S1: 28, S2: 0, S2b: 2, S2n: 3, S3: 10, S4: 4.
+- Normalized B-0016's historical "S2 board-sim" label to S2b. Replaced
+  the stale summary and its no-functional-defects claim; marked the
+  first-16-entry analysis as historical. All 51 entries count once.
+- The cheap stages first exposed 32/51 recorded defects, including
+  verification infrastructure; this is not an RTL coverage measurement.
+
 ## 2026-11-06: two cores, Linux SMP on the i9 (#9), formal proofs (S0f)
 
 - Speed (#23, evaluated): answering cache read hits in the tag-compare
