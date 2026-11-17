@@ -42,3 +42,8 @@ build-*/
 # SymbiYosys work directories
 formal/arbiter/
 formal/arbiter_*/
+
+# Slides
+slides.html
+slides.pdf
+docs/talks/*/dist/
