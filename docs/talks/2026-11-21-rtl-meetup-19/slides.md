@@ -38,7 +38,7 @@ OCaml / HardCaml -------+
 
 Most code is written by coding agents. Tests must check their work.
 
-[takibi-hardware](https://github.com/takibi-lang/takibi-hardware)
+[github.com/takibi-lang/takibi-hardware](https://github.com/takibi-lang/takibi-hardware)
 
 <!-- Timing: 30 seconds. No OCaml syntax is needed for this talk.
 The stages below have different scopes; not every block runs every stage. -->
@@ -58,7 +58,7 @@ The stages below have different scopes; not every block runs every stage. -->
 
 **Boundary:** well-formed hardware can still implement the wrong function.
 
-Scope: circuit construction; equivalence checks for selected blocks.
+**Scope:** circuit construction; equivalence checks for selected blocks.
 
 <!-- Timing: 25 seconds. Signal widths are checked at elaboration;
 do not imply that OCaml's type system proves all widths or functionality. -->
@@ -79,7 +79,7 @@ before two-core simulation (B-0048).
 
 **Boundary:** proofs depend on the properties and environment assumptions.
 
-Scope: selected dual-core arbiter properties, not the complete CPU.
+**Scope:** selected dual-core arbiter properties, not the complete CPU.
 
 <!-- Timing: 25 seconds. SC = store-conditional; AMO = atomic memory operation.
 This is separate from the block equivalence checks on the preceding slide. -->
@@ -100,7 +100,7 @@ Random lockstep with interrupts and wait states caught it (B-0047).
 
 **Boundary:** two-state, zero-delay; shared mistakes in models remain a risk.
 
-Scope: IP, cores and system benches; independent ISA tests add another oracle.
+**Scope:** IP, cores and system benches; independent ISA tests add another oracle.
 
 <!-- Timing: 25 seconds. Expect tests record observable output, but expected
 results must be derived independently, not blindly updated after a failure. -->
@@ -121,7 +121,7 @@ No ledger entry was first found at S2 proper in this audit.
 **Boundary:** reusing a bench also reuses its blind spots;
 this is not a four-state initialization check.
 
-Scope: shared benches for smaller designs; a separate SoC Verilator bench
+**Scope:** shared benches for smaller designs; a separate SoC Verilator bench
 also boots Linux in lockstep.
 
 <!-- Timing: 25 seconds. Zero first discoveries does not establish that a
@@ -144,7 +144,7 @@ The regression now emits Verilog at S1.
 **Boundary:** X behavior depends on the models and testbench setup;
 simulation does not establish when real silicon is ready.
 
-Scope: iCEstick and i9 MCU board tops, not a complete board model.
+**Scope:** iCEstick and i9 MCU board tops, not a complete board model.
 
 <!-- Timing: 25 seconds. The example is a generation failure encountered
 while running this stage, not an X-propagation defect. -->
@@ -165,7 +165,7 @@ i9 start-up hold. RTL tests had missed this assumption (B-0023).
 **Boundary:** two-state cell models; no routed delays.
 The netlist reader and cell models also need verification.
 
-Scope: MCU benches and board tops for iCE40 / ECP5.
+**Scope:** MCU benches and board tops for iCE40 / ECP5.
 
 <!-- Timing: 25 seconds. Cell-model tests and intentionally inverted LUTs
 check the verification machinery itself. This is simulation, not a full
@@ -188,7 +188,7 @@ formal equivalence proof between RTL and the mapped netlist. -->
 **Boundary:** results depend on correct timing constraints and device models.
 There is no post-route delay simulation in this flow.
 
-Scope: board builds, including the Linux SoC.
+**Scope:** board builds, including the Linux SoC.
 
 <!-- Timing: 25 seconds. S3 is run early alongside functional verification,
 not postponed until all simulations pass. -->
@@ -209,7 +209,7 @@ The simulation model used our chosen latency, so it agreed with us.
 
 **Boundary:** passing a board test covers only the exercised conditions.
 
-Scope: iCEstick MCU; i9 MCU, I/O bring-up and Linux SoC, including SMP.
+**Scope:** iCEstick MCU; i9 MCU, I/O bring-up and Linux SoC, including SMP.
 
 <!-- Timing: 25 seconds. The point is model validity: formal verification
 can also prove a design against an incorrect external-device assumption. -->
